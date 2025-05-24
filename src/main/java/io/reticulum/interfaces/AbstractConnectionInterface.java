@@ -250,6 +250,7 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
 
     @Override
     public void sentAnnounce(boolean fromSpawned) {
+        log.debug("*** Sent announce to {} (fromSpawned: {}", getInterfaceName(), fromSpawned);
         oaFreqDeque.add(0, Instant.now());
         if (nonNull(getParentInterface())) {
             getParentInterface().sentAnnounce(true);
@@ -258,6 +259,7 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
 
     @Override
     public void receivedAnnounce(boolean fromSpawned) {
+        log.debug("*** Received announce from {} (fromSpawned: {}", getInterfaceName(), fromSpawned);
         iaFreqDeque.add(0, Instant.now());
         if (nonNull(getParentInterface())) {
             getParentInterface().receivedAnnounce(true);

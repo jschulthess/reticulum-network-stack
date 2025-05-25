@@ -18,6 +18,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.time.Instant;
@@ -34,9 +35,13 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     private static final int BITRATE_GUESS = 10_000_000;
 
     private ChannelFuture channelFuture;
+    private Channel channel;
 
     private volatile boolean detached = false;
 
+    private TCPServerInterface parentInterface;
+    @JsonProperty("kiss_framing")
+    private boolean kissFraming = false;
     @JsonProperty("i2p_tunneled")
     private boolean i2pTunneled = false;
     @JsonProperty("listen_port")
@@ -106,9 +111,40 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
         Transport.getInstance().inbound(processingData, this);
     }
 
+    //@Override
+    //public synchronized void processOutgoing(byte[] data) {
+    //    //pass
+    //}
+
     @Override
     public synchronized void processOutgoing(byte[] data) {
-        //pass
+        if (online.get()) {
+            try(var os = new ByteArrayOutputStream()) {
+                if (kissFraming) {
+                    os.write(FEND);
+                    os.write(CMD_DATA);
+                    os.write(escapeKiss(data));
+                    os.write(FEND);
+                } else {
+                    os.write(FLAG);
+                    os.write(escapeHdlc(data));
+                    os.write(FLAG);
+                }
+
+                getChannel()
+                        .map(ch -> ch.writeAndFlush(os.toByteArray()))
+                        .orElseThrow(() -> new RuntimeException("Channel is not present."));
+
+                txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
+                if (nonNull(parentInterface)) {
+                    ((AbstractConnectionInterface) parentInterface).getTxb()
+                            .accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
+                }
+            } catch (Exception e) {
+                log.error("Exception occurred while transmitting via {}, tearing down interface.", this, e);
+                //teardown();
+            }
+        }
     }
 
     @Override
@@ -150,5 +186,18 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                         .map(socketAddress -> ((InetSocketAddress) socketAddress).getHostString())
                         .orElse("")
                 + ":" + listenPort;
+    }
+
+    private Optional<Channel> getChannel() {
+        return Optional.ofNullable(channelFuture)
+                .map(future -> {
+                    try {
+                        return future.sync().channel();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                })
+                .or(() -> Optional.ofNullable(channel));
     }
 }

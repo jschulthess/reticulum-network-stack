@@ -131,9 +131,9 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                     os.write(FLAG);
                 }
 
-                getChannel()
-                        .map(ch -> ch.writeAndFlush(os.toByteArray()))
-                        .orElseThrow(() -> new RuntimeException("Channel is not present."));
+                //getChannel()
+                //        .map(ch -> ch.writeAndFlush(os.toByteArray()))
+                //        .orElseThrow(() -> new RuntimeException("Channel is not present."));
 
                 txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
                 if (nonNull(parentInterface)) {

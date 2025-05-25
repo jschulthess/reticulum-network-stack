@@ -136,10 +136,10 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                 //        .orElseThrow(() -> new RuntimeException("Channel is not present."));
 
                 txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
-                if (nonNull(parentInterface)) {
-                    ((AbstractConnectionInterface) parentInterface).getTxb()
-                            .accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
-                }
+                //if (nonNull(parentInterface)) {
+                //    (parentInterface).getTxb()
+                //            .accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
+                //}
             } catch (Exception e) {
                 log.error("Exception occurred while transmitting via {}, tearing down interface.", this, e);
                 //teardown();
@@ -188,16 +188,16 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                 + ":" + listenPort;
     }
 
-    private Optional<Channel> getChannel() {
-        return Optional.ofNullable(channelFuture)
-                .map(future -> {
-                    try {
-                        return future.sync().channel();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException(e);
-                    }
-                })
-                .or(() -> Optional.ofNullable(channel));
-    }
+    //private Optional<Channel> getChannel() {
+    //    return Optional.ofNullable(channelFuture)
+    //            .map(future -> {
+    //                try {
+    //                    return future.sync().channel();
+    //                } catch (InterruptedException e) {
+    //                    Thread.currentThread().interrupt();
+    //                    throw new RuntimeException(e);
+    //                }
+    //            })
+    //            .or(() -> Optional.ofNullable(channel));
+    //}
 }

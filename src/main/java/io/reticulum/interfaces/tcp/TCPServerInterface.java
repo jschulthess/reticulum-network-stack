@@ -159,8 +159,6 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     public void sentAnnounce(boolean fromSpawned) {
         if (fromSpawned) {
             oaFreqDeque.add(0, Instant.now());
-        } else {
-            sentAnnounce(false);
         }
     }
 
@@ -168,8 +166,6 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     public void receivedAnnounce(boolean fromSpawned) {
         if (fromSpawned) {
             iaFreqDeque.add(0, Instant.now());
-        } else {
-            receivedAnnounce(false);
         }
     }
 

@@ -130,9 +130,9 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                     os.write(FLAG);
                 }
 
-                var processingData = os.toByteArray();
-                txb.accumulateAndGet(BigInteger.valueOf(processingData.length), BigInteger::add);
-                //txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
+                //var processingData = os.toByteArray();
+                //txb.accumulateAndGet(BigInteger.valueOf(processingData.length), BigInteger::add);
+                txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
             } catch (Exception e) {
                 log.error("Exception occurred while transmitting via {}.", this, e);
             }
@@ -159,6 +159,8 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     public void sentAnnounce(boolean fromSpawned) {
         if (fromSpawned) {
             oaFreqDeque.add(0, Instant.now());
+        } else {
+            sentAnnounce(false);
         }
     }
 
@@ -166,6 +168,8 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     public void receivedAnnounce(boolean fromSpawned) {
         if (fromSpawned) {
             iaFreqDeque.add(0, Instant.now());
+        } else {
+            receivedAnnounce(false);
         }
     }
 

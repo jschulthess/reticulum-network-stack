@@ -337,6 +337,7 @@ public class Link extends AbstractDestination {
     public synchronized void validateProof(Packet packet) {
         try {
             if (this.status == PENDING) {
+                log.info("*** validateProof - pending");
                 if (this.initiator && packet.getData().length == (SIGLENGTH / 8 + ECPUBSIZE / 2)) {
                     var peerPubBytes = subarray(packet.getData(), SIGLENGTH / 8, SIGLENGTH / 8 + ECPUBSIZE / 2);
                     var peerSigPubBytes = subarray(destination.getIdentity().getPublicKey(), ECPUBSIZE / 2, ECPUBSIZE);

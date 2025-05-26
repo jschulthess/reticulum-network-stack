@@ -52,6 +52,7 @@ public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> imp
             spownedInterface.setBitrate(serverInterface.getBitrate());
             spownedInterface.setIfacSize(serverInterface.getIfacSize());
             spownedInterface.setIfacNetName(serverInterface.getIfacNetName());
+            log.info("*** TCPChannelInitializer - *** ifacNetName: {}", serverInterface.getIfacNetName());
             spownedInterface.setIfacKey(serverInterface.getIfacKey());
             InterfaceUtils.initIFac(serverInterface);
             spownedInterface.setAnnounceRateTarget(serverInterface.getAnnounceRateTarget());

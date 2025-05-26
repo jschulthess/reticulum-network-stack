@@ -39,7 +39,6 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
 
     private volatile boolean detached = false;
 
-    private TCPServerInterface parentInterface;
     @JsonProperty("kiss_framing")
     private boolean kissFraming = false;
     @JsonProperty("i2p_tunneled")
@@ -131,7 +130,9 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                     os.write(FLAG);
                 }
 
-                txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
+                var processingData = os.toByteArray();
+                txb.accumulateAndGet(BigInteger.valueOf(processingData.length), BigInteger::add);
+                //txb.accumulateAndGet(BigInteger.valueOf(data.length), BigInteger::add);
             } catch (Exception e) {
                 log.error("Exception occurred while transmitting via {}.", this, e);
             }

@@ -295,6 +295,7 @@ public final class Transport implements ExitHandler {
         controlDestinations.add(tunnelSynthesizeDestination);
         controlHashes.add(tunnelSynthesizeDestination.getHash());
 
+        log.info("*** Transport.init - isTransportEnabled: {}", owner.isTransportEnabled());
         if (owner.isTransportEnabled()) {
             var dtList = storage.getDestinationTables();
             if (isNotEmpty(dtList) && isFalse(owner.isConnectedToSharedInstance())) {

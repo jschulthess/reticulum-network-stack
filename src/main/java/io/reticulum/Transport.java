@@ -62,6 +62,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import com.igormaznitsa.jbbp.utils.JBBPUtils;
 
 import static io.reticulum.constant.IdentityConstant.HASHLENGTH;
 import static io.reticulum.constant.IdentityConstant.KEYSIZE;
@@ -2160,6 +2161,9 @@ public final class Transport implements ExitHandler {
                 }
 
                 //Send it
+                log.debug("raw: {}", JBBPUtils.bin2str(raw, true));
+                log.debug("newRaw: {}", JBBPUtils.bin2str(newRaw, true));
+                log.debug("maskedRaw: {}", JBBPUtils.bin2str(maskedRaw, true));
                 iface.processOutgoing(maskedRaw);
             } else {
                 iface.processOutgoing(raw);

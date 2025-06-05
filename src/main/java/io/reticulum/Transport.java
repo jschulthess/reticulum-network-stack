@@ -1459,7 +1459,7 @@ public final class Transport implements ExitHandler {
                 if (packet.getContext() == LRPROOF) {
                     // This is a link request proof, check if it needs to be transported
                     if (
-                            (owner.isTransportEnabled() || forLocalClient || forLocalClientLink)
+                            (owner.isTransportEnabled() || forLocalClientLink || fromLocalClient)
                                     && linkTable.containsKey(encodeHexString(packet.getDestinationHash()))
                     ) {
                         var linkEntry = linkTable.get(encodeHexString(packet.getDestinationHash()));

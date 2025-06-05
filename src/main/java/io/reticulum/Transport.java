@@ -821,12 +821,20 @@ public final class Transport implements ExitHandler {
             var forLocalClient = packet.getPacketType() != ANNOUNCE
                     && destinationTable.containsKey(encodeHexString(packet.getDestinationHash()))
                     && destinationTable.get(encodeHexString(packet.getDestinationHash())).getHops() == 0;
-            var forLocalClientLink = packet.getPacketType() != ANNOUNCE
+            //var forLocalClientLink = packet.getPacketType() != ANNOUNCE
+            //        && linkTable.containsKey(encodeHexString(packet.getDestinationHash()))
+            //        && (
+            //        localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getNextHopInterface())
+            //                || localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getReceivingInterface())
+            //);
+            var forLocalClientLinkOr = packet.getPacketType() != ANNOUNCE
                     && linkTable.containsKey(encodeHexString(packet.getDestinationHash()))
-                    && (
-                    localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getNextHopInterface())
-                            || localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getReceivingInterface())
-            );
+                    && localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getReceivingInterface());
+            var forLocalClientLink = forLocalClientLinkOr
+                    || (packet.getPacketType() != ANNOUNCE
+                        && linkTable.containsKey(encodeHexString(packet.getDestinationHash()))
+                        && localClientInterfaces.contains(linkTable.get(encodeHexString(packet.getDestinationHash())).getNextHopInterface())
+                    );
             var proofForLocalClient = reverseTable.containsKey(encodeHexString(packet.getDestinationHash()))
                     && localClientInterfaces.contains(reverseTable.get(encodeHexString(packet.getDestinationHash())).getReceivingInterface());
 

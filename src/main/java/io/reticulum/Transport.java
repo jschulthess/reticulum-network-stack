@@ -726,6 +726,11 @@ public final class Transport implements ExitHandler {
         while (isFalse(jobsLock.tryLock())) {
             //sleep
             log.debug("jobs locked by {}", jobsLock);
+            try {
+                TimeUnit.MICROSECONDS.sleep(500);
+            } catch (InterruptedException e) {
+                log.trace("sleep interrupted");
+            }
         }
 
         if (isNull(identity)) {

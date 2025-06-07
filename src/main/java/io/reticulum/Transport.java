@@ -1636,6 +1636,7 @@ public final class Transport implements ExitHandler {
             // transport nodes address to the header, and modifying the flags.
             // This rule applies both for "normal" transport, and when connected
             // to a local shared Reticulum instance.
+            log.debug("outbound *** hops: {}, header type: {}", hopsEntry.getHops(), packet.getHeaderType());
             if (hopsEntry.getHops() > 1) {
                 if (packet.getHeaderType() == HEADER_1) {
                     //Insert packet into transport

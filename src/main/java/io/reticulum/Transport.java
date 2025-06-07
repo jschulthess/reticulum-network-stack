@@ -69,6 +69,7 @@ import static io.reticulum.constant.IdentityConstant.NAME_HASH_LENGTH;
 import static io.reticulum.constant.IdentityConstant.SIGLENGTH;
 import static io.reticulum.constant.LinkConstant.ECPUBSIZE;
 import static io.reticulum.constant.LinkConstant.ESTABLISHMENT_TIMEOUT_PER_HOP;
+import static io.reticulum.constant.LinkConstant.LINK_MTU_SIZE;
 import static io.reticulum.constant.PacketConstant.EXPL_LENGTH;
 import static io.reticulum.constant.ReticulumConstant.ANNOUNCE_CAP;
 import static io.reticulum.constant.ReticulumConstant.DEFAULT_PER_HOP_TIMEOUT;
@@ -1466,7 +1467,11 @@ public final class Transport implements ExitHandler {
                         if (packet.getHops() == linkEntry.getRemainingHops()) {
                             if (Objects.equals(packet.getReceivingInterface(), linkEntry.getNextHopInterface())) {
                                 try {
-                                    if (getLength(packet.getData()) == (SIGLENGTH / 8 + ECPUBSIZE / 2)) {
+                                    //if (getLength(packet.getData()) == (SIGLENGTH / 8 + ECPUBSIZE / 2)) {
+                                    if (
+                                            (getLength(packet.getData()) == (SIGLENGTH / 8 + ECPUBSIZE / 2)
+                                            || getLength(packet.getData()) == SIGLENGTH / 8 + ECPUBSIZE / 2 + LINK_MTU_SIZE)
+                                    ) {
                                         var peerPubBytes = subarray(
                                                 packet.getData(),
                                                 SIGLENGTH / 8,
@@ -1548,7 +1553,8 @@ public final class Transport implements ExitHandler {
                                     reverseEntry.getReceivingInterface().getInterfaceName());
                             var dataPacket = DataPacketConverter.fromBytes(packet.getRaw());
                             dataPacket.getHeader().setHops((byte) packet.getHops());
-                            transmit(reverseEntry.getOutboundInterface(), DataPacketConverter.toBytes(dataPacket));
+                            //transmit(reverseEntry.getOutboundInterface(), DataPacketConverter.toBytes(dataPacket));
+                            transmit(reverseEntry.getReceivingInterface(), DataPacketConverter.toBytes(dataPacket));
                         } else {
                             log.debug("Proof received on wrong interface, not transporting it.");
                         }

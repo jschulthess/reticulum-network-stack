@@ -1636,11 +1636,15 @@ public final class Transport implements ExitHandler {
             // transport nodes address to the header, and modifying the flags.
             // This rule applies both for "normal" transport, and when connected
             // to a local shared Reticulum instance.
-            log.debug("outbound *** hops: {}, header type: {}", hopsEntry.getHops(), packet.getHeaderType());
+            log.info("outbound *** hops: {}, header type: {}, packet hash: {}",
+                    hopsEntry.getHops(),
+                    packet.getHeaderType());
             if (hopsEntry.getHops() > 1) {
                 if (packet.getHeaderType() == HEADER_1) {
                     //Insert packet into transport
                     var dataPacket = DataPacketConverter.fromBytes(packet.getRaw());
+                    log.info("outbound ***** address hash1: {}, via: {}",
+                            dataPacket.getAddresses().getHash1(), hopsEntry.getVia());
                     dataPacket.getHeader().getFlags().setHeaderType(HEADER_2);
                     dataPacket.getHeader().getFlags().setPropagationType(TRANSPORT);
                     dataPacket.getAddresses().setHash2(dataPacket.getAddresses().getHash1());
@@ -1663,6 +1667,8 @@ public final class Transport implements ExitHandler {
                 if (packet.getHeaderType() == HEADER_1) {
                     //Insert packet into transport
                     var dataPacket = DataPacketConverter.fromBytes(packet.getRaw());
+                    log.info("outbound ***** address hash1: {}, via: {}",
+                            dataPacket.getAddresses().getHash1(), hopsEntry.getVia());
                     dataPacket.getHeader().getFlags().setHeaderType(HEADER_2);
                     dataPacket.getHeader().getFlags().setPropagationType(TRANSPORT);
                     dataPacket.getAddresses().setHash2(dataPacket.getAddresses().getHash1());

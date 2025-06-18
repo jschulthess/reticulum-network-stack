@@ -1223,6 +1223,7 @@ public final class Transport implements ExitHandler {
                                                     .retransmitTimeout(retransmitTimeout)
                                                     .retries(retries)
                                                     .transportId(receivedFrom)
+                                                    .hops(announceHops)
                                                     .packet(packet)
                                                     .localRebroadcasts(localRebroadcasts)
                                                     .blockRebroadcasts(blockRebroadcasts)

@@ -2187,11 +2187,11 @@ public final class Transport implements ExitHandler {
                     }
                 }
 
-                log.info("Transport - ** transmit - interface: {}", iface);
+                log.info("Transport - ** transmit - packet type: {}, interface: {}", dataPacket.getHeader().getFlags().getPacketType(), iface);
                 //Send it
                 iface.processOutgoing(maskedRaw);
             } else {
-                log.info("Transport - ** transmit (raw) - interface: {}", iface);
+                log.info("Transport - * transmit (raw) - interface: {}", iface);
                 iface.processOutgoing(raw);
             }
         } catch (Exception e) {

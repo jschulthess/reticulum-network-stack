@@ -103,6 +103,7 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
         var processingData = unmaskHdlc(data);
         this.rxb.accumulateAndGet(BigInteger.valueOf(processingData.length), BigInteger::add);
 
+        log.info("TCPServerInterface: <** processIncoming: ");
         Transport.getInstance().inbound(processingData, this);
     }
 
@@ -115,6 +116,7 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
     @Override
     public synchronized void processOutgoing(byte[] data) {
         //pass
+        log.info("TCPServerInterface: **> processOutgoing");
     }
 
     @Override

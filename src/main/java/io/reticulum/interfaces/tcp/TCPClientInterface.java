@@ -140,6 +140,7 @@ public class TCPClientInterface extends AbstractConnectionInterface implements H
     @Override
     public synchronized void processOutgoing(byte[] data) {
         log.trace("Send packet data. interface: {}, message: {}", this, data);
+        log.info("TCPClientInterface: **> process outgoing packet. interface: {}, message: {}", this, data);
         if (online.get()) {
             try(var os = new ByteArrayOutputStream()) {
                 if (kissFraming) {

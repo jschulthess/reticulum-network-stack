@@ -939,6 +939,7 @@ public final class Transport implements ExitHandler {
                                 reverseTable.put(encodeHexString(packet.getDestinationHash()), reserveEntry);
                             }
 
+                            log.info("** Transport - inbound - toutboundInterface: {}", outboundInterface);
                             transmit(outboundInterface, DataPacketConverter.toBytes(dataPacket));
                             hopsEntry.setTimestamp(Instant.now());
                         } else {
@@ -2186,9 +2187,11 @@ public final class Transport implements ExitHandler {
                     }
                 }
 
+                log.info("Transport - ** transmit - interface: {}", iface);
                 //Send it
                 iface.processOutgoing(maskedRaw);
             } else {
+                log.info("Transport - ** transmit (raw) - interface: {}", iface);
                 iface.processOutgoing(raw);
             }
         } catch (Exception e) {

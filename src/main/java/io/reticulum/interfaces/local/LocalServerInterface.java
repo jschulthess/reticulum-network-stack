@@ -47,6 +47,7 @@ public class LocalServerInterface extends AbstractConnectionInterface {
         spawnedInterface.setIN(IN);
         spawnedInterface.setOUT(OUT);
         spawnedInterface.setParentInterface(this);
+        spawnedInterface.inheritTrafficControl(this);
         spawnedInterface.setBitrate(bitrate);
         spawnedInterface.optimiseMtu();
         log.trace("Accepting new connection to shared instance: {}", spawnedInterface.getInterfaceName());

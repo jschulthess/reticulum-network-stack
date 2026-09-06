@@ -62,6 +62,7 @@ public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> imp
                     serverInterface.isI2pTunneled()
             );
             spownedInterface.setParentInterface(serverInterface);
+            spownedInterface.inheritTrafficControl(serverInterface);
             spownedInterface.setKissFraming(kissFraming);
             spownedInterface.setIN(serverInterface.isIN());
             spownedInterface.setOUT(serverInterface.isOUT());

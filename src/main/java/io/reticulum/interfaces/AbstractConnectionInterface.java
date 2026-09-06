@@ -287,6 +287,41 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
         }
     }
 
+    /**
+     * Copy the traffic-control settings of a parent server interface onto an
+     * interface spawned for an accepted connection.
+     * <p>
+     * A server interface never receives anything itself — the spawned child
+     * does — so every per-interface limit configured on the parent has to be
+     * carried across or it simply does not apply. The reference does this
+     * attribute by attribute at each spawn site
+     * ({@code RNS/Interfaces/TCPInterface.py:596-608},
+     * {@code BackboneInterface.py:701-713}); collected here so the three Java
+     * spawn sites cannot drift apart.
+     * <p>
+     * This was missing entirely: {@code ingress_control}, every {@code ic_*} and
+     * {@code ec_*} tunable, and {@code gravity} were silently discarded, so
+     * configuring any of them on a TCPServerInterface or BackboneServerInterface
+     * had no effect at all.
+     */
+    public void inheritTrafficControl(AbstractConnectionInterface parent) {
+        this.ingressControl = parent.ingressControl;
+        this.icMaxHeldAnnounces = parent.icMaxHeldAnnounces;
+        this.icBurstHold = parent.icBurstHold;
+        this.icBurstFreq = parent.icBurstFreq;
+        this.icBurstFreqNew = parent.icBurstFreqNew;
+        this.icNewTime = parent.icNewTime;
+        this.icBurstPenalty = parent.icBurstPenalty;
+        this.icHeldReleaseInterval = parent.icHeldReleaseInterval;
+
+        this.egressControl = parent.egressControl;
+        this.ecPrFreq = parent.ecPrFreq;
+        this.icPrBurstFreqNew = parent.icPrBurstFreqNew;
+        this.icPrBurstFreq = parent.icPrBurstFreq;
+
+        this.gravity = parent.gravity;
+    }
+
     @Override
     public void protocolViolation(String description) {
         protocolViolations.incrementAndGet();
@@ -666,7 +701,13 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     @Override
     public void processHeldAnnounces() {
         try {
-            if (isFalse(shouldIngressLimit()) && MapUtils.size(heldAnnounces) > 0 && Instant.now().isAfter(icHeldRelease.get())) {
+            // No burst-active gate here, deliberately: the reference drains held
+            // announces once the rate has fallen below the threshold and the
+            // penalty period has elapsed, even while the burst is still engaged
+            // — that is the whole purpose of ic_held_release. Gating on
+            // shouldIngressLimit() also called it a second time per sweep, and it
+            // mutates burst state (RNS/Interfaces/Interface.py:277).
+            if (MapUtils.size(heldAnnounces) > 0 && Instant.now().isAfter(icHeldRelease.get())) {
                 var freqThreshold = age() < icNewTime ? icBurstFreqNew : icBurstFreq;
                 var iaFreq = incomingAnnounceFrequency();
                 if (iaFreq < freqThreshold) {
@@ -695,12 +736,19 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     }
 
     /**
-     * Age of interface
+     * Seconds since this interface was created.
+     * <p>
+     * Mirrors {@code Interface.age()} ({@code time.time() - self.created}). The
+     * arguments were the wrong way round, so this returned a negative number
+     * that grew more negative with time. Every caller compares it against
+     * {@code icNewTime}, so an interface was permanently classified as "new" and
+     * ingress control used the stricter new-interface thresholds forever —
+     * roughly three times more aggressive than the reference.
      *
      * @return seconds
      */
     protected long age() {
-        return Duration.between(Instant.now(), created).getSeconds();
+        return Duration.between(created, Instant.now()).getSeconds();
     }
 
     protected double incomingAnnounceFrequency() {

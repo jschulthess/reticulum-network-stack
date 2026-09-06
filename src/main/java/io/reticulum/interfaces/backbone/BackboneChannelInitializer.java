@@ -63,6 +63,7 @@ public class BackboneChannelInitializer extends ChannelInitializer<SocketChannel
         );
 
         spawned.setParentInterface(serverInterface);
+        spawned.inheritTrafficControl(serverInterface);
         spawned.setIN(serverInterface.isIN());
         spawned.setOUT(serverInterface.isOUT());
         spawned.setBitrate(serverInterface.getBitrate());

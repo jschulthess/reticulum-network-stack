@@ -3760,6 +3760,7 @@ public final class Transport implements ExitHandler {
                         // even when no traffic is arriving, which is what lets a burst
                         // release once a storm stops (RNS/Transport.py:1151-1154).
                         anInterface.shouldIngressLimit();
+                        anInterface.shouldIngressLimitPr();
                         anInterface.processHeldAnnounces();
                     }
                     interfaceLastJobs.set(Instant.now());

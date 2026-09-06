@@ -208,4 +208,114 @@ class IngressEgressControlTest {
         assertEquals(48, iface.getIpFreqDeque().size());
         assertEquals(48, iface.getOpFreqDeque().size());
     }
+
+    // -- age() and the new-interface threshold -------------------------------
+
+    @Test
+    @DisplayName("age() grows from zero rather than running backwards")
+    void ageIsPositiveAndGrowing() throws Exception {
+        // Duration.between(now, created) is created - now: negative, and growing
+        // more negative. Every caller tests age() < icNewTime, so an interface
+        // stayed "new" forever and used the stricter thresholds permanently.
+        var first = iface.age();
+        assertTrue(first >= 0, "age must not be negative, was " + first);
+
+        Thread.sleep(1100);
+        assertTrue(iface.age() >= first, "age must grow, went from " + first + " to " + iface.age());
+    }
+
+    @Test
+    @DisplayName("an aged interface uses the relaxed threshold, a new one the strict threshold")
+    void newTimeSelectsTheThreshold() {
+        iface.setIcBurstFreqNew(3.0);
+        iface.setIcBurstFreq(10.0);
+
+        // 5 Hz: above the new-interface threshold, below the relaxed one
+        iface.seedAnnounces(50, 10);
+
+        iface.setIcNewTime(3600);          // interface counts as new
+        assertTrue(iface.shouldIngressLimit(), "5 Hz must exceed the new-interface threshold of 3");
+
+        var relaxed = new TestInterface();
+        relaxed.setIngressControl(true);
+        relaxed.setIcBurstFreqNew(3.0);
+        relaxed.setIcBurstFreq(10.0);
+        relaxed.seedAnnounces(50, 10);
+        relaxed.setIcNewTime(0);           // interface counts as established
+        assertFalse(relaxed.shouldIngressLimit(), "5 Hz must sit under the relaxed threshold of 10");
+    }
+
+    // -- held announces ------------------------------------------------------
+
+    @Test
+    @DisplayName("held announces are capped at ic_max_held_announces")
+    void heldAnnouncesAreCapped() {
+        iface.setIcMaxHeldAnnounces(3);
+        for (var i = 0; i < 10; i++) {
+            iface.holdAnnounce(announceFor((byte) i));
+        }
+
+        assertEquals(3, iface.getHeldAnnounces().size());
+    }
+
+    @Test
+    @DisplayName("a repeat announce for a held destination replaces it rather than filling the cap")
+    void repeatAnnounceReplacesHeldEntry() {
+        iface.setIcMaxHeldAnnounces(2);
+        iface.holdAnnounce(announceFor((byte) 1));
+        iface.holdAnnounce(announceFor((byte) 1));
+        iface.holdAnnounce(announceFor((byte) 2));
+        iface.holdAnnounce(announceFor((byte) 3));
+
+        assertEquals(2, iface.getHeldAnnounces().size());
+    }
+
+    private static io.reticulum.packet.Packet announceFor(byte marker) {
+        var packet = new io.reticulum.packet.Packet(new byte[0]);
+        var hash = new byte[16];
+        java.util.Arrays.fill(hash, marker);
+        packet.setDestinationHash(hash);
+
+        return packet;
+    }
+
+    // -- spawned interfaces --------------------------------------------------
+
+    @Test
+    @DisplayName("a spawned interface inherits every traffic-control setting from its parent")
+    void spawnedInterfaceInheritsTrafficControl() {
+        var parent = new TestInterface();
+        parent.setIngressControl(false);
+        parent.setIcMaxHeldAnnounces(7);
+        parent.setIcBurstHold(11.0);
+        parent.setIcBurstFreq(13.0);
+        parent.setIcBurstFreqNew(17.0);
+        parent.setIcNewTime(19);
+        parent.setIcBurstPenalty(23);
+        parent.setIcHeldReleaseInterval(29);
+        parent.setEgressControl(true);
+        parent.setEcPrFreq(31.0);
+        parent.setIcPrBurstFreqNew(37.0);
+        parent.setIcPrBurstFreq(41.0);
+        parent.setGravity(43);
+
+        // A server interface never receives anything itself, so anything not
+        // carried across here is configuration that silently does nothing.
+        var spawned = new TestInterface();
+        spawned.inheritTrafficControl(parent);
+
+        assertEquals(false, spawned.getIngressControl());
+        assertEquals(7, spawned.getIcMaxHeldAnnounces());
+        assertEquals(11.0, spawned.getIcBurstHold());
+        assertEquals(13.0, spawned.getIcBurstFreq());
+        assertEquals(17.0, spawned.getIcBurstFreqNew());
+        assertEquals(19, spawned.getIcNewTime());
+        assertEquals(23, spawned.getIcBurstPenalty());
+        assertEquals(29, spawned.getIcHeldReleaseInterval());
+        assertEquals(true, spawned.getEgressControl());
+        assertEquals(31.0, spawned.getEcPrFreq());
+        assertEquals(37.0, spawned.getIcPrBurstFreqNew());
+        assertEquals(41.0, spawned.getIcPrBurstFreq());
+        assertEquals(43, spawned.getGravity());
+    }
 }

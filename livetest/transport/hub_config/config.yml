@@ -1,0 +1,16 @@
+# The transport hub: a Java TCPServerInterface that both peers dial into and
+# route through. This is the topology CLAUDE.md records as broken — "links go
+# PENDING when clients try to connect through a TCP server".
+reticulum:
+  enable_transport: true
+  share_instance: false
+  panic_on_interface_error: false
+interfaces:
+  "Default Interface":
+    type: AutoInterface
+    enabled: false
+  "Hub TCP Server":
+    type: TCPServerInterface
+    enabled: true
+    listen_ip: 127.0.0.1
+    listen_port: 42508

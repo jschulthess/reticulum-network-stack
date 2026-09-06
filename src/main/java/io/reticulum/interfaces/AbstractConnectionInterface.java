@@ -1,6 +1,7 @@
 package io.reticulum.interfaces;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.reticulum.Transport;
 import io.reticulum.constant.TransportConstant;
@@ -51,6 +52,27 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 @AllArgsConstructor
 @NoArgsConstructor
 @Slf4j
+/*
+ * Only members carrying an explicit @JsonProperty/@JsonAlias are treated as
+ * configuration.
+ *
+ * This class extends Thread, so with Jackson's default auto-detection every
+ * inherited Thread property became a candidate — and building a deserializer
+ * then tried to force access to JDK internals such as Thread.interrupted,
+ * throwing InaccessibleObjectException under JPMS. The effect was that
+ * Reticulum could not load a config declaring an AutoInterface or
+ * TCPServerInterface at all without --add-opens java.base/java.lang and
+ * java.base/java.net, which every embedding application had to carry.
+ *
+ * Explicit-only detection fixes that at the root: nothing inherited, and
+ * nothing added by a future JDK, can leak into the config model.
+ */
+@JsonAutoDetect(
+        fieldVisibility = JsonAutoDetect.Visibility.NONE,
+        getterVisibility = JsonAutoDetect.Visibility.NONE,
+        isGetterVisibility = JsonAutoDetect.Visibility.NONE,
+        setterVisibility = JsonAutoDetect.Visibility.NONE,
+        creatorVisibility = JsonAutoDetect.Visibility.NONE)
 public abstract class AbstractConnectionInterface extends Thread implements ConnectionInterface {
 
     /**
@@ -83,6 +105,7 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     protected AtomicReference<Instant> icHeldRelease = new AtomicReference<>();
 
     protected Identity identity;
+    @JsonProperty("enabled")
     protected boolean enabled;
     protected byte[] ifacKey;
     protected byte[] ifacSignature;

@@ -159,6 +159,12 @@ public class Resource {
     private boolean initiator;
     private boolean hasMetadata;
     /**
+     * The auto-compression choice this resource was created with, retained so
+     * continuation segments inherit it ({@code auto_compress_option} in the
+     * reference).
+     */
+    private boolean autoCompressOption;
+    /**
      * Framed metadata as carried on the wire: a 3-byte big-endian length prefix
      * followed by the msgpack-encoded metadata object. Empty when there is none.
      */
@@ -322,6 +328,7 @@ public class Resource {
     ) {
         this.status = NONE;
         this.link = link;
+        this.autoCompressOption = autoCompress;
         this.timeoutFactor = link.getTrafficTimeoutFactor();
         this.progressCallback = progressCallback;
         this.requestId = requestId;
@@ -544,6 +551,21 @@ public class Resource {
         this.sdu = sduFor(link);
 
         var dataSize = data.length;
+
+        if (dataSize + this.metadataSize > MAX_EFFICIENT_SIZE) {
+            // Too large to ship as one segment. Spill to a temporary file and take
+            // the segmented path, exactly as the reference does
+            // (RNS/Resource.py:275-280) — without this the byte-array path always
+            // declared a single segment, however large the payload.
+            var spill = spillToTempFile(data);
+            this.inputFile = spill;
+            var resourceData = readSegment(spill, 1);
+            init(resourceData, link, callback, progressCallback, requestId, isResponse, timeout,
+                    autoCompress, originalHash, advertise);
+
+            return;
+        }
+
         this.grandTotalParts = (int) Math.ceil((double) (dataSize + this.metadataSize) / this.sdu);
         this.totalSize = dataSize + this.metadataSize;
 
@@ -552,6 +574,20 @@ public class Resource {
         this.split = false;
 
         init(data, link, callback, progressCallback, requestId, isResponse, timeout, autoCompress, originalHash, advertise);
+    }
+
+    /**
+     * Writes an oversized payload to a temporary file so it can be segmented.
+     * The file is marked delete-on-exit; segments are read from it as the
+     * transfer progresses, so it cannot be removed before the resource concludes.
+     */
+    @SneakyThrows
+    private static File spillToTempFile(final byte[] data) {
+        var spill = Files.createTempFile("reticulum-resource-", ".segment").toFile();
+        spill.deleteOnExit();
+        Files.write(spill.toPath(), data);
+
+        return spill;
     }
 
     public Resource(@NonNull final File file, final Link link, final Consumer<Resource> callback) {
@@ -602,43 +638,102 @@ public class Resource {
         prepareMetadata(metadata);
         this.sdu = sduFor(link);
 
-        var resourceData = new byte[0];
         if (file.isFile()) {
-            try (var fileInputStream = new FileInputStream(file)) {
-                // file.length() rather than available(): the latter is only
-                // documented as an estimate, and saturates for large files.
-                var dataSize = file.length();
+            var resourceData = readSegment(file, segmentIndex);
+            init(resourceData, link, callback, progressCallback, requestId, isResponse, timeout, autoCompress, originalHash, advertise);
+        }
+    }
 
-                this.totalSize = (int) (dataSize + this.metadataSize);
-                this.grandTotalParts = (int) Math.ceil((double) this.totalSize / this.sdu);
+    /**
+     * Reads one segment out of a file-backed resource, setting the segment and
+     * size bookkeeping as a side effect. Mirrors {@code RNS/Resource.py:299-320}.
+     *
+     * @param file         the backing file
+     * @param segmentIndex 1-based index of the segment to read
+     * @return the bytes of that segment
+     */
+    @SneakyThrows
+    private byte[] readSegment(final File file, final int segmentIndex) {
+        try (var fileInputStream = new FileInputStream(file)) {
+            // file.length() rather than available(): the latter is only
+            // documented as an estimate, and saturates for large files.
+            var dataSize = file.length();
 
-                if (this.totalSize <= MAX_EFFICIENT_SIZE) {
-                    this.totalSegments = 1;
-                    this.segmentIndex = 1;
-                    this.split = false;
+            this.totalSize = (int) (dataSize + this.metadataSize);
+            this.grandTotalParts = (int) Math.ceil((double) this.totalSize / this.sdu);
 
-                    resourceData = fileInputStream.readAllBytes();
-                } else {
-                    // RNS/Resource.py:307 — integer division. This was a multiplication,
-                    // which produced a nonsensical (and int-overflowing) segment count for
-                    // every split resource.
-                    this.totalSegments = ((this.totalSize - 1) / MAX_EFFICIENT_SIZE) + 1;
-                    this.segmentIndex = segmentIndex;
-                    this.split = true;
-                    var seekIndex = (long) segmentIndex - 1;
-                    // long arithmetic: seekIndex * MAX_EFFICIENT_SIZE overflows int
-                    // once a resource runs past ~2 GB
-                    var seekPosition = seekIndex * MAX_EFFICIENT_SIZE;
+            if (this.totalSize <= MAX_EFFICIENT_SIZE) {
+                this.totalSegments = 1;
+                this.segmentIndex = 1;
+                this.split = false;
 
-                    fileInputStream.skip(seekPosition);
-                    resourceData = fileInputStream.readNBytes(MAX_EFFICIENT_SIZE);
-                    this.inputFile = file;
-                }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+                return fileInputStream.readAllBytes();
             }
 
-            init(resourceData, link, callback, progressCallback, requestId, isResponse, timeout, autoCompress, originalHash, advertise);
+            // RNS/Resource.py:307 — integer division. This was a multiplication,
+            // which produced a nonsensical (and int-overflowing) segment count for
+            // every split resource.
+            this.totalSegments = ((this.totalSize - 1) / MAX_EFFICIENT_SIZE) + 1;
+            this.segmentIndex = segmentIndex;
+            this.split = true;
+            this.inputFile = file;
+
+            // The first segment carries the framed metadata, so it has that much
+            // less room for payload; later segments are full width and start after
+            // it (RNS/Resource.py:311-318).
+            var seekIndex = (long) segmentIndex - 1;
+            var firstReadSize = MAX_EFFICIENT_SIZE - this.metadataSize;
+            long seekPosition;
+            int segmentReadSize;
+            if (segmentIndex == 1) {
+                seekPosition = 0;
+                segmentReadSize = firstReadSize;
+            } else {
+                // long arithmetic: this overflows int once a resource runs past ~2 GB
+                seekPosition = firstReadSize + ((seekIndex - 1) * MAX_EFFICIENT_SIZE);
+                segmentReadSize = MAX_EFFICIENT_SIZE;
+            }
+
+            fileInputStream.skip(seekPosition);
+
+            return fileInputStream.readNBytes(segmentReadSize);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Continuation segment of an already-advertised multi-segment resource.
+     * <p>
+     * Mirrors {@code __prepare_next_segment} (RNS/Resource.py:779). The metadata
+     * itself travelled with the first segment, but its <em>size</em> must be
+     * carried forward: it shifts every subsequent segment's offset in the backing
+     * file, and the receiver still needs the metadata flag set for the resource as
+     * a whole.
+     */
+    private Resource(
+            @NonNull final File file,
+            final Link link,
+            final int segmentIndex,
+            final int sentMetadataSize,
+            final Consumer<Resource> callback,
+            final Consumer<Resource> progressCallback,
+            final byte[] requestId,
+            final boolean isResponse,
+            final Long timeout,
+            final boolean autoCompress,
+            final byte[] originalHash,
+            final boolean advertise
+    ) {
+        this.metadata = new byte[0];
+        this.metadataSize = sentMetadataSize;
+        this.hasMetadata = sentMetadataSize > 0;
+        this.sdu = sduFor(link);
+
+        if (file.isFile()) {
+            var resourceData = readSegment(file, segmentIndex);
+            init(resourceData, link, callback, progressCallback, requestId, isResponse, timeout,
+                    autoCompress, originalHash, advertise);
         }
     }
 
@@ -791,8 +886,18 @@ public class Resource {
         defaultThreadFactory().newThread(this::advertiseJob).start();
     }
 
+    /**
+     * Must NOT be synchronized. This loops for the entire lifetime of a transfer,
+     * so holding the instance monitor here blocks every other synchronized method
+     * on the resource — {@code request}, {@code receivePart}, {@code hashmapUpdate},
+     * {@code cancel}. The effect was that an incoming part request could not be
+     * serviced until the watchdog gave up, by which point the transfer had already
+     * failed: no resource could ever be sent. The reference guards only its brief
+     * critical section, with the {@code watchdog_lock} flag mirrored here by
+     * {@link #watchdogLock}.
+     */
     @SneakyThrows
-    private synchronized void watchdogJob() {
+    private void watchdogJob() {
         this.watchdogJobId++;
         var thisJobId = this.watchdogJobId;
 
@@ -905,22 +1010,28 @@ public class Resource {
                     }
                 }
 
-                if (sleepTime == 0) {
-                    log.warn("Warning! Link watchdog sleep time of 0!");
-                }
                 if (sleepTime < 0) {
                     log.error("Timing error, cancelling resource transfer.");
                     cancel();
-                }
-                if (sleepTime > 0) {
-                    Thread.sleep(Math.min(sleepTime, WATCHDOG_MAX_SLEEP));
+                } else {
+                    // Floor the wait at 1 ms. The reference computes this as float
+                    // seconds, where a value of exactly zero is vanishingly unlikely;
+                    // here it is a whole number of milliseconds, so any deadline less
+                    // than a millisecond away truncates to zero. Sleeping zero turned
+                    // the watchdog into a busy loop that burned a core for the whole
+                    // transfer and starved the threads meant to be servicing it.
+                    Thread.sleep(Math.max(1, Math.min(sleepTime, WATCHDOG_MAX_SLEEP)));
                 }
             }
         }
     }
 
     @SneakyThrows
-    private synchronized void advertiseJob() {
+    /**
+     * Also not synchronized: this waits on {@code readyForNewResource()} in a
+     * sleep loop, and would hold the instance monitor for that whole wait.
+     */
+    private void advertiseJob() {
         this.advertisementPacket = new Packet(link, new ResourceAdvertisement(this).pack(), RESOURCE_ADV);
         while (isFalse(link.readyForNewResource())) {
             this.status = QUEUED;
@@ -1088,8 +1199,13 @@ public class Resource {
                         }
                     } else {
                         // Otherwise we'll recursively create the
-                        // next segment of the resource
-                        new Resource(inputFile, link, callback, segmentIndex + 1, originalHash, progressCallback);
+                        // next segment of the resource. Request ID, response flag,
+                        // compression choice and metadata size all have to carry
+                        // forward, or a segmented request/response loses its
+                        // identity and later segments read from the wrong offset.
+                        new Resource(inputFile, link, segmentIndex + 1, metadataSize, callback,
+                                progressCallback, requestId, isResponse, null, autoCompressOption,
+                                originalHash, true);
                     }
                 }
             }
@@ -1305,9 +1421,17 @@ public class Resource {
             var requestedHashes = subarray(requestData, pad + HASHLENGTH / 8, requestData.length);
 
 
-            // Define the search scope
-            var searchStart = this.receiverMinConsecutiveHeight;
-            var searchEnd = this.receiverMinConsecutiveHeight + COLLISION_GUARD_SIZE;
+            // Define the search scope.
+            // Clamped to the number of parts: the reference slices a list
+            // (self.parts[start:end]), which silently clamps, whereas
+            // List.subList throws IndexOutOfBoundsException past the end.
+            // COLLISION_GUARD_SIZE is 224, so every resource with fewer than
+            // 224 parts — i.e. almost all of them — threw here the moment the
+            // receiver asked for its first part. The exception was swallowed on
+            // the Netty thread, so the sender simply reported "no part requests
+            // received" and timed out.
+            var searchStart = Math.min(this.receiverMinConsecutiveHeight, this.parts.size());
+            var searchEnd = Math.min(this.receiverMinConsecutiveHeight + COLLISION_GUARD_SIZE, this.parts.size());
 
             var mapHashes = new ArrayList<byte[]>();
             for (int i = 0; i < requestedHashes.length / MAPHASH_LEN; i++) {

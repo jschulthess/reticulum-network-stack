@@ -1,0 +1,8 @@
+# Harness scratch: logs, captures, resolved classpath, fifos
+.work/
+
+# Runtime state created by a run — identities, caches, path tables, databases.
+# Each run starts from clean storage, so none of this should be versioned.
+*/python_config/storage/
+*/python_config/interfaces/
+*/java_config/storage/

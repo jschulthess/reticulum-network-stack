@@ -267,4 +267,13 @@ public class BackboneServerInterface extends AbstractConnectionInterface impleme
     public String toString() {
         return getInterfaceName() + "/" + listenIp + ":" + listenPort;
     }
+    @Override
+    public int getHwMtu() {
+        return HW_MTU;
+    }
+
+    @Override
+    public boolean isAutoconfigureMtu() {
+        return true;
+    }
 }

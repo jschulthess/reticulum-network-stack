@@ -53,7 +53,8 @@ public class LinkChannelOutlet {
     }
 
     public double mdu() {
-        return LinkConstant.MDU;
+        // Delegate so this cannot drift from getMdu()
+        return getMdu();
     }
 
     public long rtt() {
@@ -120,6 +121,6 @@ public class LinkChannelOutlet {
     }
 
     public int getMdu() {
-        return LinkConstant.MDU;
+        return link.getMdu();
     }
 }

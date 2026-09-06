@@ -100,12 +100,58 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
      */
     protected List<Instant> oaFreqDeque = new CopyOnWriteArrayList<>();
     protected List<Instant> iaFreqDeque = new CopyOnWriteArrayList<>();
+    /** Rolling windows of recent path request timestamps, newest first. */
+    protected List<Instant> ipFreqDeque = new CopyOnWriteArrayList<>();
+    protected List<Instant> opFreqDeque = new CopyOnWriteArrayList<>();
 
-    /** Max entries kept in {@link #oaFreqDeque}/{@link #iaFreqDeque}. Bounds the frequency window. */
-    protected static final int FREQ_DEQUE_MAXLEN = 128;
+    /** Announce ingress burst state. */
+    protected volatile boolean icBurstActive = false;
+    protected volatile Instant icBurstActivated = Instant.EPOCH;
+    protected volatile Instant icBurstSustained = Instant.EPOCH;
+
+    /** Path request ingress burst state. */
+    protected volatile boolean icPrBurstActive = false;
+    protected volatile Instant icPrBurstActivated = Instant.EPOCH;
+    protected volatile Instant icPrBurstSustained = Instant.EPOCH;
+    protected volatile int icPrBurstCooldown = 0;
+
+    /** Number of samples retained for incoming announce frequency (Interface.IA_FREQ_SAMPLES). */
+    protected static final int IA_FREQ_SAMPLES = 48;
+    /** Number of samples retained for outgoing announce frequency (Interface.OA_FREQ_SAMPLES). */
+    protected static final int OA_FREQ_SAMPLES = 48;
+    /** Minimum number of samples before an incoming frequency is reported at all. */
+    protected static final int IC_DEQUE_MIN_SAMPLE = 2;
+    /** Lowest announce frequency tracked, in Hz. */
+    protected static final double AR_MINFREQ_HZ = 0.1;
+    /** Sample decay window in seconds: samples older than this are aged out one per call. */
+    protected static final double AR_FREQ_DECAY = 1 / AR_MINFREQ_HZ;
+    /** Number of samples retained for incoming path request frequency. */
+    protected static final int IP_FREQ_SAMPLES = 48;
+    /** Number of samples retained for outgoing path request frequency. */
+    protected static final int OP_FREQ_SAMPLES = 48;
+    /** Lowest path request frequency tracked, in Hz. */
+    protected static final double PR_MINFREQ_HZ = 0.1;
+    /** Path request sample decay window in seconds. */
+    protected static final double PR_FREQ_DECAY = 1 / PR_MINFREQ_HZ;
+    /** Minimum outgoing samples before egress limiting can engage. */
+    protected static final int EC_BURST_MIN_SAMPLES = 2;
+    /** Rounds an active path request burst stays engaged after the rate drops. */
+    protected static final int IC_PR_BURST_COOLDOWN = 3;
 
     @JsonAlias({"interface_mode", "mode"})
     protected InterfaceMode interfaceMode = MODE_FULL;
+
+    /** See {@link ConnectionInterface#isAnnouncesFromInternal()}. */
+    @JsonProperty("announces_from_internal")
+    protected boolean announcesFromInternal = true;
+
+    /** See {@link ConnectionInterface#getAnnouncesToInternal()}. */
+    @JsonProperty("announces_to_internal")
+    protected Boolean announcesToInternal;
+
+    /** See {@link ConnectionInterface#isRecursivePrs()}. */
+    @JsonProperty("recursive_prs")
+    protected boolean recursivePrs = false;
 
     @JsonProperty("ifac_size")
     protected Integer ifacSize;
@@ -126,6 +172,13 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     @JsonProperty("bitrate")
     protected Integer bitrate;
 
+    /**
+     * Preference weight used to break ties between equally good paths, and to
+     * order interfaces. See {@link ConnectionInterface#getGravity()}.
+     */
+    @JsonProperty("gravity")
+    protected int gravity = 0;
+
     @JsonProperty("announce_rate_target")
     protected Integer announceRateTarget;
 
@@ -142,22 +195,35 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     protected int icMaxHeldAnnounces = 256;
 
     @JsonProperty("ic_burst_hold")
-    protected Double icBurstHold = 60.0;
+    protected Double icBurstHold = 15.0;
 
     @JsonProperty("ic_burst_freq_new")
-    protected Double icBurstFreqNew = 3.5;
+    protected Double icBurstFreqNew = 3.0;
 
     @JsonProperty("ic_burst_freq")
-    protected Double icBurstFreq = 12.0;
+    protected Double icBurstFreq = 10.0;
 
     @JsonProperty("ic_new_time")
     protected long icNewTime = 2 * 60 * 60; //seconds
 
     @JsonProperty("ic_burst_penalty")
-    protected long icBurstPenalty = 5 * 60; //seconds
+    protected long icBurstPenalty = 15; //seconds
 
     @JsonProperty("ic_held_release_interval")
-    protected long icHeldReleaseInterval = 30; //seconds
+    protected long icHeldReleaseInterval = 5; //seconds
+
+    @JsonProperty("ic_pr_burst_freq_new")
+    protected Double icPrBurstFreqNew = 3.0;
+
+    @JsonProperty("ic_pr_burst_freq")
+    protected Double icPrBurstFreq = 8.0;
+
+    /** Whether outgoing path requests are rate limited. Off by default, as in the reference. */
+    @JsonProperty("egress_control")
+    protected Boolean egressControl = false;
+
+    @JsonProperty("ec_pr_freq")
+    protected Double ecPrFreq = 5.0;
 
     @JsonProperty("announce_cap")
     protected Double announceCap = ANNOUNCE_CAP / 100;
@@ -308,27 +374,216 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
         }
     }
 
-    /** Prepend now() to the outgoing-announce window and trim it to {@link #FREQ_DEQUE_MAXLEN}. */
+    /** Prepend now() to the outgoing-announce window and trim it to {@link #OA_FREQ_SAMPLES}. */
     protected void recordSentAnnounce() {
         oaFreqDeque.add(0, Instant.now());
-        trimFreqDeque(oaFreqDeque);
+        trimFreqDeque(oaFreqDeque, OA_FREQ_SAMPLES);
     }
 
-    /** Prepend now() to the incoming-announce window and trim it to {@link #FREQ_DEQUE_MAXLEN}. */
+    /** Prepend now() to the incoming-announce window and trim it to {@link #IA_FREQ_SAMPLES}. */
     protected void recordReceivedAnnounce() {
         iaFreqDeque.add(0, Instant.now());
-        trimFreqDeque(iaFreqDeque);
+        trimFreqDeque(iaFreqDeque, IA_FREQ_SAMPLES);
     }
 
-    private static void trimFreqDeque(List<Instant> deque) {
+    private static void trimFreqDeque(List<Instant> deque, int maxSamples) {
         // Newest entries are prepended at index 0, so drop from the tail (oldest first).
-        while (deque.size() > FREQ_DEQUE_MAXLEN) {
+        while (deque.size() > maxSamples) {
             deque.remove(deque.size() - 1);
         }
     }
 
+    /**
+     * Oldest retained sample, or null if the window is empty. These windows are
+     * stored newest-first, so the oldest entry is the last one — the mirror of
+     * the reference implementation's {@code deque[0]}.
+     */
+    private static Instant oldestSample(List<Instant> deque) {
+        return deque.isEmpty() ? null : deque.get(deque.size() - 1);
+    }
+
+    /**
+     * Frequency in Hz over the retained window: sample count divided by the span
+     * back to the oldest sample. Mirrors {@code Interface.incoming_announce_frequency}
+     * and friends (RNS/Interfaces/Interface.py:346-366), including the decay step
+     * that drops one aged sample per call.
+     */
+    private static double sampleFrequency(List<Instant> deque, int minSamples) {
+        return sampleFrequency(deque, minSamples, AR_FREQ_DECAY, 0);
+    }
+
+    /**
+     * @param decay     seconds after which one aged sample is dropped per call
+     * @param preemptive counted into the rate without being recorded, so an
+     *                   egress check can ask "what would the rate be if I sent now"
+     */
+    private static double sampleFrequency(List<Instant> deque, int minSamples, double decay, int preemptive) {
+        var n = deque.size();
+        if (n <= minSamples) {
+            return 0;
+        }
+        n += preemptive;
+
+        var oldest = oldestSample(deque);
+        // Nanosecond resolution: the reference uses float seconds from time.time(),
+        // and truncating to milliseconds would report 0 Hz for bursts arriving
+        // inside the same millisecond — exactly the case the controls exist for.
+        var span = Duration.between(oldest, Instant.now()).toNanos() / 1_000_000_000.0;
+
+        if (span > decay) {
+            deque.remove(deque.size() - 1);
+        }
+        if (span <= 0) {
+            return 0;
+        }
+
+        return n / span;
+    }
+
+    protected double incomingPrFrequency() {
+        return sampleFrequency(ipFreqDeque, IC_DEQUE_MIN_SAMPLE, PR_FREQ_DECAY, 0);
+    }
+
+    protected double outgoingPrFrequency(boolean preemptive) {
+        return sampleFrequency(opFreqDeque, 1, PR_FREQ_DECAY, preemptive ? 1 : 0);
+    }
+
+    /** Records an inbound path request, and propagates it to a parent interface. */
+    @Override
+    public void receivedPathRequest() {
+        ipFreqDeque.add(0, Instant.now());
+        trimFreqDeque(ipFreqDeque, IP_FREQ_SAMPLES);
+        if (nonNull(getParentInterface())) {
+            getParentInterface().receivedPathRequest();
+        }
+    }
+
+    /** Records an outbound path request, and propagates it to a parent interface. */
+    @Override
+    public void sentPathRequest() {
+        opFreqDeque.add(0, Instant.now());
+        trimFreqDeque(opFreqDeque, OP_FREQ_SAMPLES);
+        if (nonNull(getParentInterface())) {
+            getParentInterface().sentPathRequest();
+        }
+    }
+
+    /**
+     * Whether inbound announces should currently be held rather than processed.
+     * <p>
+     * This returned false unconditionally, so announce ingress control never
+     * engaged despite all of its configuration being present: an interface under
+     * an announce storm had no protection at all. Mirrors
+     * {@code Interface.should_ingress_limit} (RNS/Interfaces/Interface.py:188).
+     * <p>
+     * Once a burst is detected the limit stays engaged until the rate has been
+     * below the threshold for {@code ic_burst_hold} seconds, measured from both
+     * activation and the last time the rate was sustained.
+     */
     @Override
     public boolean shouldIngressLimit() {
+        if (isFalse(Boolean.TRUE.equals(ingressControl))) {
+            return false;
+        }
+
+        var freqThreshold = age() < icNewTime ? icBurstFreqNew : icBurstFreq;
+        var iaFreq = incomingAnnounceFrequency();
+        var now = Instant.now();
+
+        if (icBurstActive) {
+            var heldLongEnough = now.isAfter(icBurstActivated.plusSeconds(icBurstHold.longValue()))
+                    && now.isAfter(icBurstSustained.plusSeconds(icBurstHold.longValue()));
+
+            if (iaFreq < freqThreshold && heldLongEnough) {
+                if (iaFreqDeque.size() >= IC_DEQUE_MIN_SAMPLE) {
+                    icBurstActive = false;
+                }
+            } else if (iaFreq >= freqThreshold) {
+                icBurstSustained = now;
+            }
+
+            return true;
+        }
+
+        if (iaFreq > freqThreshold) {
+            icBurstActive = true;
+            icBurstActivated = now;
+            icBurstSustained = now;
+            icHeldRelease.set(now.plusSeconds(icBurstPenalty));
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether inbound path requests should currently be rate limited.
+     * <p>
+     * Mirrors {@code Interface.should_ingress_limit_pr}
+     * (RNS/Interfaces/Interface.py:213). Unlike the announce variant this uses a
+     * cooldown counter rather than a sample-count check to leave the burst state.
+     */
+    @Override
+    public boolean shouldIngressLimitPr() {
+        if (isFalse(Boolean.TRUE.equals(ingressControl))) {
+            return false;
+        }
+
+        var freqThreshold = age() < icNewTime ? icPrBurstFreqNew : icPrBurstFreq;
+        var ipFreq = incomingPrFrequency();
+        var now = Instant.now();
+
+        if (icPrBurstActive) {
+            var heldLongEnough = now.isAfter(icPrBurstActivated.plusSeconds(icBurstHold.longValue()))
+                    && now.isAfter(icPrBurstSustained.plusSeconds(icBurstHold.longValue()));
+
+            if (ipFreq < freqThreshold && heldLongEnough) {
+                if (icPrBurstCooldown <= 0) {
+                    icPrBurstActive = false;
+                } else {
+                    icPrBurstCooldown--;
+                }
+            } else {
+                icPrBurstCooldown = IC_PR_BURST_COOLDOWN;
+                if (ipFreq >= freqThreshold) {
+                    icPrBurstSustained = now;
+                }
+            }
+
+            return true;
+        }
+
+        if (ipFreq > freqThreshold) {
+            icPrBurstActive = true;
+            icPrBurstActivated = now;
+            icPrBurstSustained = now;
+            icPrBurstCooldown = IC_PR_BURST_COOLDOWN;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether an outgoing path request should be suppressed to stay within this
+     * interface's egress budget. Mirrors
+     * {@code Interface.should_egress_limit_pr} (RNS/Interfaces/Interface.py:240).
+     * <p>
+     * The frequency is evaluated preemptively — as if the request had already
+     * been sent — so the interface does not exceed the budget and then notice.
+     */
+    @Override
+    public boolean shouldEgressLimitPr() {
+        if (isFalse(Boolean.TRUE.equals(egressControl))) {
+            return false;
+        }
+
+        if (outgoingPrFrequency(true) > ecPrFreq) {
+            return opFreqDeque.size() >= EC_BURST_MIN_SAMPLES;
+        }
+
         return false;
     }
 
@@ -383,36 +638,11 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     }
 
     protected double incomingAnnounceFrequency() {
-        if (isFalse(iaFreqDeque.size() > 1)) {
-            return 0;
-        } else {
-            var dqLen = iaFreqDeque.size();
-            var deltaSum = 0L;
-            for (int i = 1; i < dqLen; i++) {
-                deltaSum += Duration.between(iaFreqDeque.get(i), iaFreqDeque.get(i - 1)).getSeconds();
-            }
-            // Was oaFreqDeque.get(dqLen - 1) — a copy-paste from outgoingAnnounceFrequency().
-            // dqLen is the INCOMING deque's size, so indexing the OUTGOING deque threw
-            // IndexOutOfBounds whenever oaFreqDeque was shorter. Use the incoming deque.
-            deltaSum += Duration.between(Instant.now(), iaFreqDeque.get(dqLen - 1)).getSeconds();
-
-            return deltaSum == 0 ? 0 : (double) 1 / deltaSum / dqLen;
-        }
+        return sampleFrequency(iaFreqDeque, IC_DEQUE_MIN_SAMPLE);
     }
 
     protected double outgoingAnnounceFrequency() {
-        if (isFalse(oaFreqDeque.size() > 1)) {
-            return 0;
-        } else {
-            var dqLen = oaFreqDeque.size();
-            var deltaSum = 0L;
-            for (int i = 1; i < dqLen; i++) {
-                deltaSum += Duration.between(oaFreqDeque.get(i), oaFreqDeque.get(i - 1)).getSeconds();
-            }
-            deltaSum += Duration.between(Instant.now(), oaFreqDeque.get(dqLen - 1)).getSeconds();
-
-            return deltaSum == 0 ? 0 : (double) 1 / deltaSum / dqLen;
-        }
+        return sampleFrequency(oaFreqDeque, 1);
     }
 
     @Override

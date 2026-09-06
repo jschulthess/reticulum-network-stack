@@ -456,4 +456,13 @@ public class BackboneClientInterface extends AbstractConnectionInterface impleme
     public String toString() {
         return getInterfaceName() + "/" + targetHost + ":" + targetPort;
     }
+    @Override
+    public int getHwMtu() {
+        return io.reticulum.interfaces.backbone.BackboneServerInterface.HW_MTU;
+    }
+
+    @Override
+    public boolean isAutoconfigureMtu() {
+        return true;
+    }
 }

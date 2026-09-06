@@ -161,4 +161,13 @@ public class TCPServerInterface extends AbstractConnectionInterface implements H
                         .orElse("")
                 + ":" + listenPort;
     }
+    @Override
+    public int getHwMtu() {
+        return io.reticulum.interfaces.tcp.TCPChannelInitializer.HW_MTU;
+    }
+
+    @Override
+    public boolean isAutoconfigureMtu() {
+        return true;
+    }
 }

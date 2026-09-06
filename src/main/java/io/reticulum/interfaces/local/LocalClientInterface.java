@@ -29,7 +29,8 @@ public class LocalClientInterface extends AbstractConnectionInterface implements
 
     private static final long RECONNECT_WAIT = TimeUnit.SECONDS.toMillis(3);
 
-    private static final int HW_MTU = 1064;
+    /** Matches LocalInterface.HW_MTU in the reference implementation. */
+    private static final int HW_MTU = 262_144;
 
     private Socket socket;
     private SocketAddress targetAddress;

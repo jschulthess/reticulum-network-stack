@@ -3,6 +3,7 @@ package io.reticulum.interfaces;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import io.reticulum.constant.ReticulumConstant;
 import io.reticulum.identity.Identity;
 import io.reticulum.interfaces.auto.AutoInterface;
 import io.reticulum.interfaces.backbone.BackboneClientInterface;
@@ -107,6 +108,69 @@ public interface ConnectionInterface {
     void  setAnnounceAllowedAt(Instant announceAllowedAt);
 
     Integer getBitrate();
+
+    /**
+     * Preference weight for this interface when choosing between equally good
+     * paths. A higher value wins. Mirrors {@code Interface.gravity}; the
+     * reference default is 0.
+     */
+    default int getGravity() {
+        return 0;
+    }
+
+    /**
+     * Whether announces whose next hop is an internal-mode interface may be
+     * propagated out of this interface. Mirrors
+     * {@code Interface.announces_from_internal}; defaults to true.
+     */
+    default boolean isAnnouncesFromInternal() {
+        return true;
+    }
+
+    /**
+     * Whether announces arriving via this interface may be propagated into an
+     * internal-mode interface. Mirrors {@code Interface.announces_to_internal};
+     * null means "not configured", which is distinct from false.
+     */
+    default Boolean getAnnouncesToInternal() {
+        return null;
+    }
+
+    /**
+     * Whether a path request arriving on this interface may trigger recursive
+     * path requests on other interfaces, regardless of interface mode. Mirrors
+     * {@code Interface.recursive_prs}; defaults to false.
+     */
+    default boolean isRecursivePrs() {
+        return false;
+    }
+
+    /**
+     * Largest frame this interface can carry, in bytes.
+     * <p>
+     * Only meaningful when {@link #isAutoconfigureMtu()} or {@link #isFixedMtu()}
+     * is true; otherwise the link MTU stays at the Reticulum default. Mirrors
+     * {@code Interface.HW_MTU} in the reference implementation.
+     */
+    default int getHwMtu() {
+        return ReticulumConstant.MTU;
+    }
+
+    /**
+     * Whether links over this interface may negotiate an MTU up to
+     * {@link #getHwMtu()}. Mirrors {@code Interface.AUTOCONFIGURE_MTU}.
+     */
+    default boolean isAutoconfigureMtu() {
+        return false;
+    }
+
+    /**
+     * Whether this interface always operates at {@link #getHwMtu()}. Mirrors
+     * {@code Interface.FIXED_MTU}.
+     */
+    default boolean isFixedMtu() {
+        return false;
+    }
 
     default void detach() {
         //pass
@@ -240,6 +304,30 @@ public interface ConnectionInterface {
     void receivedAnnounce(boolean fromSpawned);
 
     boolean shouldIngressLimit();
+
+    /**
+     * Whether inbound path requests on this interface should currently be rate
+     * limited. Mirrors {@code Interface.should_ingress_limit_pr}.
+     */
+    default boolean shouldIngressLimitPr() {
+        return false;
+    }
+
+    /**
+     * Whether an outgoing path request should be suppressed to stay within this
+     * interface's egress budget. Mirrors {@code Interface.should_egress_limit_pr}.
+     */
+    default boolean shouldEgressLimitPr() {
+        return false;
+    }
+
+    /** Records that a path request was received on this interface. */
+    default void receivedPathRequest() {
+    }
+
+    /** Records that a path request was sent on this interface. */
+    default void sentPathRequest() {
+    }
 
     void holdAnnounce(Packet announcePacket);
 }

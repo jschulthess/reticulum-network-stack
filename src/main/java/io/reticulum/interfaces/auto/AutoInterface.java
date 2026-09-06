@@ -177,7 +177,7 @@ public class AutoInterface extends AbstractConnectionInterface implements AutoIn
     private void initNetworkInterfaceServer() {
         try (var socket = new DatagramSocket(dataPort)) {
             while (true) {
-                byte[] buf = new byte[1024];
+                byte[] buf = new byte[AutoInterfaceConstant.HW_MTU];
                 var packet = new DatagramPacket(buf, buf.length);
                 socket.receive(packet);
                 processIncoming(Arrays.copyOf(packet.getData(), packet.getLength()));
@@ -226,7 +226,7 @@ public class AutoInterface extends AbstractConnectionInterface implements AutoIn
         var group = InetAddress.getByName(getMcastDiscoveryAddress());
         try (var discoverySocket = new MulticastSocket(discoveryPort)) {
             discoverySocket.joinGroup(group);
-            var buf = new byte[1024];
+            var buf = new byte[AutoInterfaceConstant.HW_MTU];
             while (true) {
                 var packet = new DatagramPacket(buf, buf.length);
                 try {
@@ -261,6 +261,16 @@ public class AutoInterface extends AbstractConnectionInterface implements AutoIn
             log.debug("{} added peer {}", this, peerAddress);
         }
         peers.put(peerAddress, Instant.now());
+    }
+
+    @Override
+    public int getHwMtu() {
+        return AutoInterfaceConstant.HW_MTU;
+    }
+
+    @Override
+    public boolean isFixedMtu() {
+        return true;
     }
 
     @Override

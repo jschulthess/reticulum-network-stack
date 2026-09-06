@@ -18,7 +18,12 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> implements HDLC, KISS {
 
-    private static final int HW_MTU = 1064;
+    /**
+     * Matches TCPInterface.HW_MTU in the reference implementation. This was
+     * 1064, so any frame the reference sent above that size was rejected by
+     * the deframer as too long.
+     */
+    public static final int HW_MTU = 262_144;
 
     private final ConnectionInterface connectionInterface;
     private final boolean kissFraming;

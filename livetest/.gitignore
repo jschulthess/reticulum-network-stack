@@ -3,6 +3,6 @@
 
 # Runtime state created by a run — identities, caches, path tables, databases.
 # Each run starts from clean storage, so none of this should be versioned.
-*/python_config/storage/
-*/python_config/interfaces/
-*/java_config/storage/
+# Matched by directory name so it covers any config dir, however named.
+storage/
+interfaces/

@@ -14,3 +14,7 @@ interfaces:
     enabled: true
     listen_ip: 127.0.0.1
     listen_port: 42508
+    # Recursive path discovery on behalf of peers only runs for interfaces in
+    # DISCOVER_PATHS_FOR (access point, gateway, roaming, internal). A plain
+    # "full" interface just forwards, so nothing would ever be batched.
+    mode: gateway

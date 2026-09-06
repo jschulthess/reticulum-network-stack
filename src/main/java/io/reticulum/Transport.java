@@ -1443,34 +1443,38 @@ public final class Transport implements ExitHandler {
                                 }
                             }
 
-                            //If we have any waiting discovery path requests for this destination, we retransmit to that
-                            // interface immediately
-                            if (discoveryPathRequests.containsKey(encodeHexString(packet.getDestinationHash()))) {
-                                var prEntry = discoveryPathRequests.get(encodeHexString(packet.getDestinationHash()));
-                                attachedInterface = prEntry.getRequestingInterface();
+                            // If we have any waiting discovery path requests for this
+                            // destination, answer every interface waiting on it, not just
+                            // the first — several peers behind a transport node routinely
+                            // ask for the same destination, and the reference batches them
+                            // onto one request (RNS/Transport.py:2433-2454). The entry is
+                            // removed as it is served, as the reference pops it.
+                            var prEntry = discoveryPathRequests.remove(encodeHexString(packet.getDestinationHash()));
+                            if (nonNull(prEntry)) {
+                                for (ConnectionInterface requestingInterface : prEntry.getRequestingInterfaces()) {
+                                    log.debug("Got matching announce, answering waiting discovery path request for {} on {}",
+                                            encodeHexString(packet.getDestinationHash()), requestingInterface.getInterfaceName()
+                                    );
+                                    var announceIdentity = recall(packet.getDestinationHash());
+                                    var announceDestination = new Destination(announceIdentity, OUT, SINGLE, "unknown", "unknown");
+                                    announceDestination.setHash(packet.getDestinationHash());
+                                    announceDestination.setHexHash(encodeHexString(announceDestination.getHash()));
+                                    var announceData = packet.getData();
 
-                                log.debug("Got matching announce, answering waiting discovery path request for {} on {}",
-                                        encodeHexString(packet.getDestinationHash()), attachedInterface.getInterfaceName()
-                                );
-                                var announceIdentity = recall(packet.getDestinationHash());
-                                var announceDestination = new Destination(announceIdentity, OUT, SINGLE, "unknown", "unknown");
-                                announceDestination.setHash(packet.getDestinationHash());
-                                announceDestination.setHexHash(encodeHexString(announceDestination.getHash()));
-                                var announceData = packet.getData();
-
-                                var newAnnounce = new Packet(
-                                        announceDestination,
-                                        announceData,
-                                        ANNOUNCE,
-                                        PATH_RESPONSE,
-                                        HEADER_2,
-                                        TRANSPORT,
-                                        identity.getHash(),
-                                        attachedInterface
-                                );
-                                newAnnounce.setHops(packet.getHops());
-                                final var _a3 = newAnnounce;
-                                deferredIO.add(_a3::send);
+                                    var newAnnounce = new Packet(
+                                            announceDestination,
+                                            announceData,
+                                            ANNOUNCE,
+                                            PATH_RESPONSE,
+                                            HEADER_2,
+                                            TRANSPORT,
+                                            identity.getHash(),
+                                            requestingInterface
+                                    );
+                                    newAnnounce.setHops(packet.getHops());
+                                    final var _a3 = newAnnounce;
+                                    deferredIO.add(_a3::send);
+                                }
                             }
 
                             var destinationTableEntry = Hops.builder()
@@ -2330,6 +2334,21 @@ public final class Transport implements ExitHandler {
     }
 
     /**
+     * Add a requester to a path request already in flight, so it is answered
+     * along with the peer that started the search.
+     */
+    private void batchOntoWaitingPathRequest(
+            PathRequestEntry waiting, byte[] destinationHash, ConnectionInterface attachedInterface) {
+        if (waiting.addRequestingInterface(attachedInterface)) {
+            log.debug("Batching path request for {} onto the one already waiting, now {} requester(s)",
+                    encodeHexString(destinationHash), waiting.getRequestingInterfaces().size());
+        } else {
+            log.debug("There is already a waiting path request for {} on behalf of path request on {}",
+                    encodeHexString(destinationHash), attachedInterface);
+        }
+    }
+
+    /**
      * Clamp an inbound link request's MTU signalling to what the receiving
      * interface can actually carry, rewriting the packet's data in place.
      * <p>
@@ -2889,6 +2908,12 @@ public final class Transport implements ExitHandler {
                 if (nonNull(tagBytes)) {
                     if (tagBytes.length > (TRUNCATED_HASHLENGTH / 8)) {
                         tagBytes = subarray(tagBytes, 0, TRUNCATED_HASHLENGTH / 8);
+                        // Truncating is enough to carry on with, but an oversized tag
+                        // is still a malformed request and the reference counts it
+                        // (RNS/Transport.py:1845).
+                        if (nonNull(packet.getReceivingInterface())) {
+                            packet.getReceivingInterface().protocolViolation("Excessive path request tag size");
+                        }
                     }
 
                     var uniqueTag = concatArrays(destinationHash, tagBytes);
@@ -2907,7 +2932,13 @@ public final class Transport implements ExitHandler {
                                 encodeHexString(destinationHash), encodeHexString(uniqueTag));
                     }
                 } else {
+                    // A path request with no tag cannot be de-duplicated, so the
+                    // reference treats it as a protocol violation rather than merely
+                    // ignoring it (RNS/Transport.py:1840).
                     log.debug("Ignoring tagless path request for {}.", encodeHexString(destinationHash));
+                    if (nonNull(packet.getReceivingInterface())) {
+                        packet.getReceivingInterface().protocolViolation("Tagless path request");
+                    }
                 }
             }
         } catch (Exception e) {
@@ -3062,9 +3093,19 @@ public final class Transport implements ExitHandler {
                 }
             }
         } else if (shouldSearchForUnknown) {
-            if (discoveryPathRequests.containsKey(encodeHexString(destinationHash))) {
-                log.debug("There is already a waiting path request for {} on behalf of path request on {}",
-                        encodeHexString(destinationHash), attachedInterface);
+            // Batch onto a request already in flight rather than starting a second
+            // search — but record this requester too, or it never receives the path
+            // response when the announce arrives (RNS/Transport.py:3563-3572).
+            //
+            // The reference holds discovery_pr_lock across the whole read-modify-
+            // write. A plain get-then-put is not enough here: two peers routinely
+            // ask in the same millisecond on different interface threads, both see
+            // an empty table, and the second put discards the first requester. So
+            // claim the slot with putIfAbsent and let the loser batch onto the
+            // winner's entry.
+            var waiting = discoveryPathRequests.get(encodeHexString(destinationHash));
+            if (nonNull(waiting)) {
+                batchOntoWaitingPathRequest(waiting, destinationHash, attachedInterface);
 
             } else {
                 // Abort the recursive path request if the receiving interface has a
@@ -3080,13 +3121,21 @@ public final class Transport implements ExitHandler {
                 log.debug("Attempting to discover unknown path to {} on behalf of path request on {}",
                         encodeHexString(destinationHash), attachedInterface);
 
-                discoveryPathRequests.put(encodeHexString(destinationHash),
-                        PathRequestEntry.builder()
-                                .destinationHash(destinationHash)
-                                .timeout(Instant.now().plusSeconds(PATH_REQUEST_TIMEOUT))
-                                .requestingInterface(attachedInterface)
-                                .build()
-                );
+                var newEntry = PathRequestEntry.builder()
+                        .destinationHash(destinationHash)
+                        .timeout(Instant.now().plusSeconds(PATH_REQUEST_TIMEOUT))
+                        .requestingInterfaces(new CopyOnWriteArrayList<>())
+                        .build();
+                newEntry.addRequestingInterface(attachedInterface);
+
+                var raced = discoveryPathRequests.putIfAbsent(encodeHexString(destinationHash), newEntry);
+                if (nonNull(raced)) {
+                    // Another interface thread claimed it between the get above and
+                    // here. Join theirs and leave the fan-out to them.
+                    batchOntoWaitingPathRequest(raced, destinationHash, attachedInterface);
+
+                    return;
+                }
 
                 for (ConnectionInterface connectionInterface : interfaces) {
                     if (nonNull(searchModeFilter)

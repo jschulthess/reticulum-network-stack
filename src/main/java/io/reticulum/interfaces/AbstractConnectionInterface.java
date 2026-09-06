@@ -163,7 +163,13 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     /** Rounds an active path request burst stays engaged after the rate drops. */
     protected static final int IC_PR_BURST_COOLDOWN = 3;
 
-    @JsonAlias({"interface_mode", "mode"})
+    // @JsonProperty is required, not decorative: this class uses explicit-only
+    // @JsonAutoDetect, and @JsonAlias only adds extra names to a property that is
+    // already discoverable. With the alias alone the key never bound, so every
+    // interface silently stayed MODE_FULL and no node could be configured as a
+    // gateway, access point, boundary or roaming peer.
+    @JsonProperty("interface_mode")
+    @JsonAlias({"mode"})
     protected InterfaceMode interfaceMode = MODE_FULL;
 
     /** See {@link ConnectionInterface#isAnnouncesFromInternal()}. */
@@ -188,10 +194,12 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     /** Epoch-second timestamp when an auto-connected interface first went offline; null if online. */
     protected Long autoconnectDown;
 
-    @JsonAlias({"networkname", "network_name"})
+    @JsonProperty("networkname")
+    @JsonAlias({"network_name"})
     protected String ifacNetName;
 
-    @JsonAlias({"passphrase", "pass_phrase"})
+    @JsonProperty("passphrase")
+    @JsonAlias({"pass_phrase"})
     protected String ifacNetKey;
 
     @JsonProperty("bitrate")

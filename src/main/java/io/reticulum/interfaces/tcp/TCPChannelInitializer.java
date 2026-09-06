@@ -25,6 +25,17 @@ public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> imp
      */
     public static final int HW_MTU = 262_144;
 
+    /**
+     * Deframer ceiling: the largest value {@code optimise_mtu()} can produce.
+     * <p>
+     * The per-interface limit is {@link ConnectionInterface#getHwMtu()}, derived
+     * from the bitrate, and it is enforced in {@code Transport.inbound()} where
+     * the reference enforces it. This decoder must therefore not be the narrower
+     * of the two, or a configured high bitrate would raise the negotiated MTU
+     * above what the pipeline will accept and frames would vanish in Netty.
+     */
+    public static final int MAX_FRAME_SIZE = 524_288;
+
     private final ConnectionInterface connectionInterface;
     private final boolean kissFraming;
 
@@ -33,7 +44,7 @@ public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> imp
         ch.pipeline()
                 .addLast(
 //                        new LoggingHandler(ByteBufFormat.HEX_DUMP),
-                        new DelimiterBasedFrameDecoder(HW_MTU, true, kissFraming ? delimitersKiss() : delimitersHdlc()),
+                        new DelimiterBasedFrameDecoder(MAX_FRAME_SIZE, true, kissFraming ? delimitersKiss() : delimitersHdlc()),
                         new ByteArrayDecoder(),
                         new ByteArrayEncoder(),
                         new PacketInboundHandler(createInterface(ch))
@@ -55,6 +66,7 @@ public class TCPChannelInitializer extends ChannelInitializer<SocketChannel> imp
             spownedInterface.setIN(serverInterface.isIN());
             spownedInterface.setOUT(serverInterface.isOUT());
             spownedInterface.setBitrate(serverInterface.getBitrate());
+            spownedInterface.optimiseMtu();
             spownedInterface.setAnnounceRateTarget(serverInterface.getAnnounceRateTarget());
             spownedInterface.setAnnounceRateGrace(serverInterface.getAnnounceRateGrace());
             spownedInterface.setAnnounceRatePenalty(serverInterface.getAnnounceRatePenalty());

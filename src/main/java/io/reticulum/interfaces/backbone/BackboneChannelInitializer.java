@@ -29,6 +29,8 @@ public class BackboneChannelInitializer extends ChannelInitializer<SocketChannel
     @Override
     protected void initChannel(SocketChannel ch) {
         ch.pipeline().addLast(
+                // Ceiling only; the per-interface limit is getHwMtu(), enforced in
+                // Transport.inbound() as the reference does.
                 new DelimiterBasedFrameDecoder(BackboneServerInterface.HW_MTU, true, delimitersHdlc()),
                 new ByteArrayDecoder(),
                 new ByteArrayEncoder(),
@@ -64,6 +66,7 @@ public class BackboneChannelInitializer extends ChannelInitializer<SocketChannel
         spawned.setIN(serverInterface.isIN());
         spawned.setOUT(serverInterface.isOUT());
         spawned.setBitrate(serverInterface.getBitrate());
+        spawned.optimiseMtu();
         spawned.setAnnounceRateTarget(serverInterface.getAnnounceRateTarget());
         spawned.setAnnounceRateGrace(serverInterface.getAnnounceRateGrace());
         spawned.setAnnounceRatePenalty(serverInterface.getAnnounceRatePenalty());

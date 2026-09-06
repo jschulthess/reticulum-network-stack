@@ -55,6 +55,7 @@ public class LocalClientInterface extends AbstractConnectionInterface implements
         interfaceMode = InterfaceMode.MODE_FULL;
 
         bitrate = 1000_000_000;
+        hwMtu = HW_MTU;
         writing = false;
 
         forceBitrate = false;
@@ -94,7 +95,7 @@ public class LocalClientInterface extends AbstractConnectionInterface implements
                     } else if (singlByte == FLAG) {
                         inFrame = true;
                         dataBuffer.reset();
-                    } else if (inFrame && dataBuffer.size() < HW_MTU) {
+                    } else if (inFrame && dataBuffer.size() < getHwMtu()) {
                         if (singlByte == ESC) {
                             escape = true;
                         } else {
@@ -273,5 +274,11 @@ public class LocalClientInterface extends AbstractConnectionInterface implements
         if (fromSpawned) {
             recordReceivedAnnounce();
         }
+    }
+
+    /** {@code LocalInterface.AUTOCONFIGURE_MTU = True} in the reference. */
+    @Override
+    public boolean isAutoconfigureMtu() {
+        return true;
     }
 }

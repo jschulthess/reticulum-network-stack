@@ -66,6 +66,7 @@ public class AutoInterface extends AbstractConnectionInterface implements AutoIn
     {
         ifacSize = DEFAULT_IFAC_SIZE;
         bitrate = BITRATE_GUESS;
+        hwMtu = AutoInterfaceConstant.HW_MTU;
         IN = true;
         OUT = true;
     }
@@ -261,11 +262,6 @@ public class AutoInterface extends AbstractConnectionInterface implements AutoIn
             log.debug("{} added peer {}", this, peerAddress);
         }
         peers.put(peerAddress, Instant.now());
-    }
-
-    @Override
-    public int getHwMtu() {
-        return AutoInterfaceConstant.HW_MTU;
     }
 
     @Override

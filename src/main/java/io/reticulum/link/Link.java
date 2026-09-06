@@ -486,6 +486,34 @@ public class Link extends AbstractDestination {
     }
 
     /**
+     * Return a copy of a link-request data field with its MTU signalling bytes
+     * replaced, so the request advertises {@code mtu} instead.
+     * <p>
+     * Used by {@code Transport} to clamp an advertised MTU down to what an
+     * interface can carry ({@code RNS/Transport.py:2556,2082}).
+     *
+     * @throws IllegalArgumentException if {@code mode} is not an enabled mode
+     */
+    public static byte[] withClampedMtu(byte[] data, int mtu, int mode) {
+        var clamped = signallingBytes(mtu, mode);
+        var rewritten = Arrays.copyOf(data, getLength(data));
+        System.arraycopy(clamped, 0, rewritten, getLength(data) - LINK_MTU_SIZE, LINK_MTU_SIZE);
+
+        return rewritten;
+    }
+
+    /**
+     * Return a copy of a link-request data field with its MTU signalling bytes
+     * removed, so the link falls back to the Reticulum default MTU.
+     * <p>
+     * Used by {@code Transport} where an interface declares no hardware MTU at
+     * all ({@code RNS/Transport.py:2553,2071}).
+     */
+    public static byte[] withoutMtuSignalling(byte[] data) {
+        return Arrays.copyOf(data, getLength(data) - LINK_MTU_SIZE);
+    }
+
+    /**
      * Extract the cipher mode from a link-request packet's data.
      *
      * @param data raw link-request data field

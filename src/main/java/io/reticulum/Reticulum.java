@@ -628,6 +628,10 @@ public class Reticulum implements ExitHandler {
                 }
 
                 applyInterfaceDefaults(iface);
+                // Derive the hardware MTU from the (possibly config-overridden)
+                // bitrate, as the reference does once an interface is configured
+                // (RNS/Reticulum.py:948).
+                iface.optimiseMtu();
                 interfaceList.add(iface);
             }
             log.info("System interfaces are ready");

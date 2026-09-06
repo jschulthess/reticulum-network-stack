@@ -146,14 +146,62 @@ public interface ConnectionInterface {
     }
 
     /**
-     * Largest frame this interface can carry, in bytes.
+     * Largest frame this interface can carry, in bytes, or {@code null} if the
+     * interface declares no hardware MTU at all.
      * <p>
      * Only meaningful when {@link #isAutoconfigureMtu()} or {@link #isFixedMtu()}
      * is true; otherwise the link MTU stays at the Reticulum default. Mirrors
-     * {@code Interface.HW_MTU} in the reference implementation.
+     * {@code Interface.HW_MTU} in the reference implementation, which is an
+     * instance attribute seeded from a per-class ceiling and then recomputed by
+     * {@link #optimiseMtu()} — hence nullable here too, since
+     * {@code optimise_mtu()} yields {@code None} below 62.5 kbps.
      */
-    default int getHwMtu() {
+    default Integer getHwMtu() {
         return ReticulumConstant.MTU;
+    }
+
+    /**
+     * Record a protocol violation observed on this interface.
+     * <p>
+     * Mirrors {@code Interface.protocol_violation()}. The reference only counts
+     * and logs; the counter is what a future traffic-class implementation would
+     * act on.
+     */
+    default void protocolViolation(String description) {
+        //pass
+    }
+
+    /**
+     * Recompute {@link #getHwMtu()} from the interface's bitrate.
+     * <p>
+     * A no-op unless {@link #isAutoconfigureMtu()} is true. Mirrors
+     * {@code Interface.optimise_mtu()} ({@code RNS/Interfaces/Interface.py:250}),
+     * which the reference calls after an interface is configured and after a
+     * server interface spawns a client interface. Without it the per-class
+     * {@code HW_MTU} is only a ceiling that is never applied: a reference TCP
+     * interface at the default 10 Mbps guess ends up at 16384, not 262144.
+     */
+    default void optimiseMtu() {
+        //pass
+    }
+
+    /**
+     * The hardware MTU a given bitrate supports, or {@code null} below
+     * 62.5 kbps. Table transcribed from {@code Interface.optimise_mtu()}.
+     */
+    static Integer optimisedMtu(Integer bitrate) {
+        if (bitrate == null)              return null;
+        if (bitrate >= 1_000_000_000)     return 524288;
+        else if (bitrate >= 750_000_000)  return 262144;
+        else if (bitrate >= 400_000_000)  return 131072;
+        else if (bitrate >= 200_000_000)  return 65536;
+        else if (bitrate >= 100_000_000)  return 32768;
+        else if (bitrate >= 10_000_000)   return 16384;
+        else if (bitrate >= 5_000_000)    return 8192;
+        else if (bitrate >= 2_000_000)    return 4096;
+        else if (bitrate >= 1_000_000)    return 2048;
+        else if (bitrate >= 62_500)       return 1024;
+        else                              return null;
     }
 
     /**

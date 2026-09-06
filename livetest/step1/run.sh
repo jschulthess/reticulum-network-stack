@@ -85,7 +85,7 @@ rm -f "$WORK/server_stdin"
 mkfifo "$WORK/server_stdin"
 exec 9<> "$WORK/server_stdin"
 
-PYTHONPATH="$RNS_SRC" python3 "$RNS_SRC/Examples/Link.py" \
+PYTHONPATH="$RNS_SRC" python3 -u "$RNS_SRC/Examples/Link.py" \
     -s --config "$PY_CONFIG" <&9 > "$PY_LOG" 2>&1 &
 SERVER_PID=$!
 

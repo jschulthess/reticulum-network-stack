@@ -1,5 +1,6 @@
 package io.reticulum;
 
+import io.reticulum.constant.ReticulumConstant;
 import io.reticulum.constant.TransportConstant;
 import io.reticulum.destination.Destination;
 import io.reticulum.identity.Identity;
@@ -776,6 +777,22 @@ public final class Transport implements ExitHandler {
             return;
         }
 
+        // Drop frames larger than the receiving interface ever promised to carry
+        // (RNS/Transport.py:1790). This is the backstop behind MTU negotiation: if
+        // a link ends up over-negotiated, oversized frames are reported here rather
+        // than being silently truncated by the interface (as UDP would do on
+        // AutoInterface). Checked before taking jobsLock — a frame this size is
+        // going nowhere.
+        if (nonNull(iface) && nonNull(iface.getHwMtu())) {
+            var ifacSlack = nonNull(iface.getIfacSize()) ? iface.getIfacSize() : 0;
+            if (getLength(localRaw) > iface.getHwMtu() + ifacSlack) {
+                iface.protocolViolation(
+                        "Frame size exceeded MTU of " + iface.getHwMtu() + " on " + iface);
+
+                return;
+            }
+        }
+
         // tryLock(2ms) enters the fair queue, preventing starvation of outbound() callers.
         // Plain tryLock() barges past waiting threads; with high inbound rate this starves announce.
         try {
@@ -970,6 +987,10 @@ public final class Transport implements ExitHandler {
                             var outboundInterface = destinationTable.get(encodeHexString(packet.getDestinationHash())).getInterface();
 
                             if (packet.getPacketType() == LINKREQUEST) {
+                                if (isFalse(clampRelayedLinkRequest(packet, dataPacket, outboundInterface))) {
+                                    return;
+                                }
+
                                 var now = Instant.now();
                                 var proofTimeout =  now
                                         .plusMillis((long) ESTABLISHMENT_TIMEOUT_PER_HOP * Math.max(1, remainingHops))
@@ -1548,7 +1569,6 @@ public final class Transport implements ExitHandler {
                 if (isNull(packet.getTransportId()) || Arrays.equals(packet.getTransportId(), identity.getHash())) {
                     Destination linkRequestDest = null;
                     for (Destination destination : destinations) {
-                        // Note: TODO - implement python path_mtu, mode part
                         if (
                                 Arrays.equals(destination.getHash(), packet.getDestinationHash())
                                         && destination.getType() == packet.getDestinationType()
@@ -1558,7 +1578,7 @@ public final class Transport implements ExitHandler {
                             break;
                         }
                     }
-                    if (linkRequestDest != null) {
+                    if (linkRequestDest != null && clampInboundLinkRequest(packet)) {
                         // Release jobsLock before dispatch to prevent ABBA deadlock:
                         // destination.receive() on a link request triggers Link establishment
                         // which may acquire channel.lock, while channel.send() holds channel.lock
@@ -2250,6 +2270,121 @@ public final class Transport implements ExitHandler {
      * anything else the link stays at the Reticulum default
      * ({@code RNS/Transport.py:3173}).
      */
+    /**
+     * Clamp a relayed link request's MTU signalling to what this hop can carry
+     * end to end, rewriting the outgoing packet's data.
+     * <p>
+     * Mirrors {@code RNS/Transport.py:2062-2087}. A transport node sits between
+     * two interfaces that may have very different widths, so the advertised MTU
+     * has to come down to the narrower of the two before it is passed on —
+     * otherwise the far end negotiates an MTU this hop cannot forward.
+     * <p>
+     * One deliberate deviation: where the previous hop declares no hardware MTU,
+     * the reference evaluates {@code min(nh_mtu, None)}, which raises and drops
+     * the request. Here that case simply clamps to the next-hop MTU, which is
+     * evidently the intent.
+     *
+     * @return true if the packet should be forwarded, false if it was dropped
+     */
+    private boolean clampRelayedLinkRequest(Packet packet, DataPacket outgoing, ConnectionInterface outboundInterface) {
+        var pathMtu = Link.mtuFromLrPacket(outgoing.getData());
+        if (isNull(pathMtu) || pathMtu == 0) {
+            return true;
+        }
+        var mode = Link.modeFromLrPacket(outgoing.getData());
+
+        var prevHopMtu = nonNull(packet.getReceivingInterface())
+                ? packet.getReceivingInterface().getHwMtu()
+                : null;
+        var nextHopMtu = nonNull(outboundInterface) ? outboundInterface.getHwMtu() : null;
+
+        if (isNull(nextHopMtu)) {
+            log.debug("No next-hop HW MTU, disabling link MTU upgrade");
+            outgoing.setData(Link.withoutMtuSignalling(outgoing.getData()));
+
+            return true;
+        }
+        if (isFalse(outboundInterface.isAutoconfigureMtu()) && isFalse(outboundInterface.isFixedMtu())) {
+            log.debug("Outbound interface doesn't support MTU autoconfiguration, disabling link MTU upgrade");
+            outgoing.setData(Link.withoutMtuSignalling(outgoing.getData()));
+
+            return true;
+        }
+
+        if (nextHopMtu < pathMtu || (nonNull(prevHopMtu) && prevHopMtu < pathMtu)) {
+            var clampedMtu = nonNull(prevHopMtu) ? Math.min(nextHopMtu, prevHopMtu) : nextHopMtu;
+            try {
+                outgoing.setData(Link.withClampedMtu(outgoing.getData(), clampedMtu, mode));
+                log.debug("Clamping link MTU to {}", clampedMtu);
+            } catch (Exception e) {
+                log.debug("Dropping link request packet: {}", e.getMessage());
+                if (nonNull(packet.getReceivingInterface())) {
+                    packet.getReceivingInterface().protocolViolation("Undecodable path MTU signalling bytes");
+                }
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Clamp an inbound link request's MTU signalling to what the receiving
+     * interface can actually carry, rewriting the packet's data in place.
+     * <p>
+     * The reference does this in Transport rather than in Link
+     * ({@code RNS/Transport.py:2544-2565}), which is why
+     * {@code Link.validate_request} has no clamp of its own — by the time it
+     * runs, the signalling bytes have already been corrected. Without this a
+     * responder confirms whatever MTU it is offered, and both ends then emit
+     * frames larger than the interface ever promised to carry. Java↔Python only
+     * appeared to work because the reference clamps on our behalf.
+     *
+     * @return true if the packet should be dispatched to the destination,
+     *         false if it was dropped as a protocol violation
+     */
+    private boolean clampInboundLinkRequest(Packet packet) {
+        var receivingInterface = packet.getReceivingInterface();
+        if (isNull(receivingInterface)) {
+            return true;
+        }
+
+        var pathMtu = Link.mtuFromLrPacket(packet.getData());
+        if (isNull(pathMtu) || pathMtu == 0) {
+            return true;
+        }
+        var mode = Link.modeFromLrPacket(packet.getData());
+
+        var ifaceMtu = receivingInterface.getHwMtu();
+        if (isNull(ifaceMtu)) {
+            // The interface declares no hardware MTU at all: strip the
+            // signalling bytes so the link falls back to the Reticulum default.
+            packet.setData(Link.withoutMtuSignalling(packet.getData()));
+
+            return true;
+        }
+
+        var nextHopMtu = receivingInterface.isAutoconfigureMtu() || receivingInterface.isFixedMtu()
+                ? ifaceMtu
+                : ReticulumConstant.MTU;
+
+        if (nextHopMtu < pathMtu) {
+            try {
+                packet.setData(Link.withClampedMtu(packet.getData(), nextHopMtu, mode));
+                log.debug("Clamped inbound link request MTU from {} to {} on {}",
+                        pathMtu, nextHopMtu, receivingInterface);
+            } catch (Exception e) {
+                log.warn("Dropping link request packet to local destination: {}", e.getMessage());
+                receivingInterface.protocolViolation("Undecodable path MTU signalling bytes");
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public Integer nextHopInterfaceHwMtu(byte[] destinationHash) {
         var nextHopInterface = nextHopInterface(destinationHash);
         if (isNull(nextHopInterface)) {

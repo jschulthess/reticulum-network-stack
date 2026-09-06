@@ -135,6 +135,7 @@ public class BackboneClientInterface extends AbstractConnectionInterface impleme
         // on Interface, but Java defaults OUT=true — don't override it here.
         this.interfaceMode = InterfaceMode.MODE_FULL;
         this.bitrate = BITRATE_GUESS;
+        this.hwMtu = io.reticulum.interfaces.backbone.BackboneServerInterface.HW_MTU;
 
         if (isNull(ifacSize)) {
             ifacSize = 16;
@@ -456,11 +457,6 @@ public class BackboneClientInterface extends AbstractConnectionInterface impleme
     public String toString() {
         return getInterfaceName() + "/" + targetHost + ":" + targetPort;
     }
-    @Override
-    public int getHwMtu() {
-        return io.reticulum.interfaces.backbone.BackboneServerInterface.HW_MTU;
-    }
-
     @Override
     public boolean isAutoconfigureMtu() {
         return true;

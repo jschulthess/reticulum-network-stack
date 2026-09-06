@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.reticulum.constant.ReticulumConstant;
+
 import static io.reticulum.constant.ReticulumConstant.ANNOUNCE_CAP;
 import static io.reticulum.constant.ReticulumConstant.MINIMUM_BITRATE;
 import static io.reticulum.constant.ReticulumConstant.QUEUED_ANNOUNCE_LIFE;
@@ -196,6 +198,20 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     protected Integer bitrate;
 
     /**
+     * Largest frame this interface can carry, in bytes; {@code null} means the
+     * interface declares no hardware MTU.
+     * <p>
+     * Mirrors the reference's {@code self.HW_MTU} instance attribute: subclasses
+     * seed it with their per-class ceiling, and {@link #optimiseMtu()} then
+     * recomputes it from the bitrate for interfaces that autoconfigure.
+     */
+    protected Integer hwMtu = ReticulumConstant.MTU;
+
+    /** Count of protocol violations seen on this interface. */
+    protected final java.util.concurrent.atomic.AtomicLong protocolViolations =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
      * Preference weight used to break ties between equally good paths, and to
      * order interfaces. See {@link ConnectionInterface#getGravity()}.
      */
@@ -268,6 +284,33 @@ public abstract class AbstractConnectionInterface extends Thread implements Conn
     public void setIfacNetKey(String newIfacNetkey) {
         if (StringUtils.isNotBlank(newIfacNetkey)) {
             ifacNetKey = newIfacNetkey;
+        }
+    }
+
+    @Override
+    public void protocolViolation(String description) {
+        protocolViolations.incrementAndGet();
+        log.debug("Protocol violation on {}: {}", this, description);
+    }
+
+    @Override
+    public Integer getHwMtu() {
+        return hwMtu;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Transcribed from {@code Interface.optimise_mtu()}. Note that this
+     * <em>overwrites</em> the per-class ceiling rather than capping against it,
+     * exactly as the reference does — a 1 Gbps interface reaches 524288 even
+     * where its class constant is lower.
+     */
+    @Override
+    public void optimiseMtu() {
+        if (isAutoconfigureMtu()) {
+            this.hwMtu = ConnectionInterface.optimisedMtu(this.bitrate);
+            log.debug("{} hardware MTU set to {}", this, this.hwMtu);
         }
     }
 

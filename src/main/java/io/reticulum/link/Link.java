@@ -1574,7 +1574,12 @@ public class Link extends AbstractDestination {
             return token.decrypt(data);
 
         } catch (Exception e) {
-            log.error("Decryption failed on link {}", this, e);
+            // Message only, no stack trace. This fires once per packet on any link
+            // whose peer derived a different key — an old peer that still uses
+            // AES-128 produces one per packet for the life of the link — and the
+            // trace is the same 30-odd Netty frames every time. The reference logs
+            // a single line here too (RNS/Link.py decrypt).
+            log.error("Decryption failed on link {}. The contained exception was: {}", this, e.toString());
         }
 
         return null;

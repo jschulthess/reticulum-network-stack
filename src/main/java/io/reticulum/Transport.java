@@ -60,6 +60,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
@@ -69,6 +70,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -181,6 +183,25 @@ public final class Transport implements ExitHandler {
     private final ReentrantLock savingTunnelTableLock = new ReentrantLock();
     private final ReentrantLock jobsLock = new ReentrantLock(true);
 
+    /**
+     * How long {@link #outbound} waits for {@code jobsLock} before dropping the
+     * packet. Generous, because legitimate holders can be slow (a table cull under
+     * announce flooding has been measured in tens of seconds); the point is only to
+     * put a ceiling on a wait that was previously unbounded.
+     */
+    private static final long OUTBOUND_LOCK_TIMEOUT_MS =
+            Long.getLong("io.reticulum.outboundLockTimeoutMs", 120_000L);
+
+    /**
+     * The shorter budget used once the lock looks leaked. Without it, every caller
+     * would burn the full timeout on every packet and the node would crawl rather
+     * than degrade.
+     */
+    private static final long OUTBOUND_LOCK_TIMEOUT_DEGRADED_MS = 1_000L;
+
+    /** Set when a wait for {@code jobsLock} timed out; cleared when one succeeds. */
+    private final AtomicBoolean jobsLockSuspectedLeaked = new AtomicBoolean();
+
     private final AtomicReference<Instant> linksLastChecked = new AtomicReference<>(Instant.EPOCH);
     private final AtomicReference<Instant> announcesLastChecked = new AtomicReference<>(Instant.EPOCH);
     private final AtomicReference<Instant> receiptsLastChecked = new AtomicReference<>(Instant.EPOCH);
@@ -277,7 +298,21 @@ public final class Transport implements ExitHandler {
     /**
      * A list of packet hashes for duplicate detection
      */
-    private final Map<String, byte[]> packetHashMap = new ConcurrentHashMap<>();
+    /**
+     * Rolling duplicate-detection window, as hex packet hashes.
+     * <p>
+     * Two generations, mirroring the reference's {@code packet_hashlist} /
+     * {@code packet_hashlist_prev} ({@code RNS/Transport.py:172-173}): at the cull
+     * point the current set becomes the previous one and a fresh set starts, so
+     * dedup keeps working across the rotation. Clearing outright, as this used to,
+     * dropped the whole window at once and let every duplicate through until it
+     * refilled.
+     * <p>
+     * A set of hashes, not a map to the same bytes: the value was the decoded key
+     * and cost an extra byte[] and reference per entry.
+     */
+    private volatile Set<String> packetHashList = ConcurrentHashMap.newKeySet();
+    private volatile Set<String> packetHashListPrev = ConcurrentHashMap.newKeySet();
     /**
      * A table for keeping track of tagged path requests
      */
@@ -316,7 +351,8 @@ public final class Transport implements ExitHandler {
             // behaviour) and is no longer persisted. Do not load it from storage —
             // a multi-GB legacy collection would be read into memory here and risk
             // OOM at startup. Drop any legacy on-disk collection instead.
-            packetHashMap.clear();
+            packetHashList.clear();
+            packetHashListPrev.clear();
             storage.clearPacketHashList();
             reloadBlacklist();
         }
@@ -891,7 +927,7 @@ public final class Transport implements ExitHandler {
             }
 
             if (rememberPacketHash) {
-                packetHashMap.put(encodeHexString(packet.getPacketHash()), packet.getPacketHash());
+                packetHashList.add(encodeHexString(packet.getPacketHash()));
                 cache(packet, false);
             }
 
@@ -1727,7 +1763,7 @@ public final class Transport implements ExitHandler {
                                     // Add this packet to the filter hashlist if we
                                     // have determined that it's actually destined
                                     // for this system, and then validate the proof
-                                    packetHashMap.put(encodeHexString(packet.getHash()), packet.getHash());
+                                    packetHashList.add(encodeHexString(packet.getHash()));
                                     link.validateProof(packet);
                                 }
                             }
@@ -1823,6 +1859,10 @@ public final class Transport implements ExitHandler {
     // TODO: 12.05.2023 подлежит рефакторингу. (subject to refactoring)
     public boolean outbound(@NonNull final Packet packet) {
         var outboundSpinStart = System.currentTimeMillis();
+        var waitBudgetMs = jobsLockSuspectedLeaked.get()
+                ? OUTBOUND_LOCK_TIMEOUT_DEGRADED_MS
+                : OUTBOUND_LOCK_TIMEOUT_MS;
+
         while (isFalse(jobsLock.tryLock())) {
             try {
                 MILLISECONDS.sleep(5);
@@ -1835,6 +1875,27 @@ public final class Transport implements ExitHandler {
                 return false;
             }
             long outboundWaitedMs = System.currentTimeMillis() - outboundSpinStart;
+
+            // Give up rather than wait forever. The reference blocks indefinitely on
+            // its jobs_lock, which is safe there because Python's `with` always
+            // releases it. Java's finally does not offer that guarantee: an
+            // OutOfMemoryError can abort at an arbitrary bytecode index — including
+            // during the deoptimisation that materialises scalar-replaced objects —
+            // and leave the lock held by a thread that has since gone back to its
+            // pool. Observed in production: a node OOMed, a scheduler thread kept
+            // jobsLock while idle, and every outbound() here spun for ten hours until
+            // the node was killed. Dropping packets degrades the node; spinning
+            // forever ends it.
+            if (outboundWaitedMs > waitBudgetMs) {
+                if (jobsLockSuspectedLeaked.compareAndSet(false, true)) {
+                    log.error("outbound() gave up after {}ms waiting for jobsLock — it appears "
+                                    + "to be leaked. Holder: {}. Dropping outbound packets and "
+                                    + "retrying briefly until it is released.",
+                            outboundWaitedMs, jobsLock);
+                }
+
+                return false;
+            }
             if (outboundWaitedMs > 1000 && outboundWaitedMs % 5000 < 10) {
                 log.warn("outbound() spin-waited {}ms for jobsLock; lock state: {}", outboundWaitedMs, jobsLock);
             }
@@ -1849,6 +1910,10 @@ public final class Transport implements ExitHandler {
                     }
                 });
             }
+        }
+
+        if (jobsLockSuspectedLeaked.compareAndSet(true, false)) {
+            log.warn("jobsLock is available again — resuming normal outbound processing");
         }
 
         var sent = false;
@@ -2061,7 +2126,7 @@ public final class Transport implements ExitHandler {
 
                     if (shouldTransmit) {
                         if (isFalse(storedHash)) {
-                            packetHashMap.put(encodeHexString(packet.getPacketHash()), packet.getPacketHash());
+                            packetHashList.add(encodeHexString(packet.getPacketHash()));
                             storedHash = true;
                         }
 
@@ -2349,6 +2414,13 @@ public final class Transport implements ExitHandler {
     }
 
     /**
+     * Whether this packet hash is in either generation of the dedup window.
+     */
+    private boolean seenBefore(String packetHashHex) {
+        return packetHashList.contains(packetHashHex) || packetHashListPrev.contains(packetHashHex);
+    }
+
+    /**
      * Clamp an inbound link request's MTU signalling to what the receiving
      * interface can actually carry, rewriting the packet's data in place.
      * <p>
@@ -2543,7 +2615,7 @@ public final class Transport implements ExitHandler {
             }
         }
 
-        if (isFalse(packetHashMap.containsKey(encodeHexString(packet.getPacketHash())))) {
+        if (isFalse(seenBefore(encodeHexString(packet.getPacketHash())))) {
             return true;
         } else {
             if (packet.getPacketType() == ANNOUNCE) {
@@ -3544,9 +3616,15 @@ public final class Transport implements ExitHandler {
                 // blocking all traffic). Since packet-dedup works in a rolling window (not a
                 // full multi-day history), a simple in-memory
                 // clear is sufficient and matches Python RNS behaviour (in-memory only).
-                if (packetHashMap.size() > HASHLIST_MAXSIZE) {
-                    log.warn("packetHashMap reached {} entries — clearing in-memory dedup table", packetHashMap.size());
-                    packetHashMap.clear();
+                // Rotate at half the maximum, as the reference does
+                // (RNS/Transport.py:832-834): the current window becomes the previous
+                // one and a fresh one starts, so the two together still cover a full
+                // HASHLIST_MAXSIZE of history and no duplicate slips through at the
+                // boundary. Peak memory is the same as one full-size window.
+                if (packetHashList.size() > HASHLIST_MAXSIZE / 2) {
+                    log.debug("Rotating packet dedup window at {} entries", packetHashList.size());
+                    packetHashListPrev = packetHashList;
+                    packetHashList = ConcurrentHashMap.newKeySet();
                 }
 
                 //Cull the path request tags list if it has reached its max size

@@ -2241,13 +2241,13 @@ public final class Transport implements ExitHandler {
     }
 
     /**
-     * @param destinationHash A Destination object's Hash property
-     * @return milliseconds
-     */
-    /**
      * Time to allow for the first hop towards a destination, in
      * <b>milliseconds</b>: one MTU across the next-hop interface plus the
      * per-hop grace.
+     *
+     * @param destinationHash A Destination object's Hash property
+     *
+     * @return milliseconds
      */
     public int firstHopTimeout(byte[] destinationHash) {
         return firstHopTimeoutForLatency(nextHopPerByteLatency(destinationHash));
@@ -2268,6 +2268,9 @@ public final class Transport implements ExitHandler {
 
     /**
      * Seconds per byte for a given interface bitrate, or null if unknown.
+     *
+     * @param bitrate interface bitrate in bits per second, or null if unknown
+     * @return seconds per byte, or null if the bitrate is unknown or not positive
      */
     public static Double perByteLatency(final Integer bitrate) {
         return nonNull(bitrate) && bitrate > 0 ? 8.0 / bitrate : null;
@@ -2514,6 +2517,9 @@ public final class Transport implements ExitHandler {
      * <p>
      * Computed on demand rather than cached on interface changes as the
      * reference does, so it cannot go stale.
+     *
+     * @return the bitrate in bits per second, or null if no online interface
+     *         reports one
      */
     public Integer lowestInterfaceBitrate() {
         return interfaces.stream()
@@ -2527,6 +2533,9 @@ public final class Transport implements ExitHandler {
     /**
      * Bitrate of the fastest currently online interface, in bits per second, or
      * null if no online interface reports one.
+     *
+     * @return the bitrate in bits per second, or null if no online interface
+     *         reports one
      */
     public Integer highestInterfaceBitrate() {
         return interfaces.stream()
@@ -2797,6 +2806,9 @@ public final class Transport implements ExitHandler {
     /**
      * Emission timestamp encoded in an announce random blob
      * ({@code RNS/Transport.py:3725}).
+     *
+     * @param randomBlob the announce random blob to decode
+     * @return the emission timestamp in epoch seconds
      */
     public static long timebaseFromRandomBlob(byte[] randomBlob) {
         var timebase = 0L;
@@ -2810,6 +2822,10 @@ public final class Transport implements ExitHandler {
     /**
      * Most recent emission timestamp across a set of random blobs — the age of
      * the freshest announce behind a path table entry.
+     *
+     * @param randomBlobs the announce random blobs to decode
+     * @return the freshest emission timestamp in epoch seconds, or 0 if the list
+     *         is empty
      */
     public static long timebaseFromRandomBlobs(List<byte[]> randomBlobs) {
         var timebase = 0L;

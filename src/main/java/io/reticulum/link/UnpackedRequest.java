@@ -21,6 +21,8 @@ public class UnpackedRequest {
      * rngit sends a map on every request. Kept as a msgpack value so nothing is
      * lost or coerced on the way to the request handler; a missing element and
      * nil both become a nil value.
+     *
+     * @return the request data; a nil value when none was sent
      */
     private Value data;
 
